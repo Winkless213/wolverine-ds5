@@ -66,7 +66,7 @@ class WindowsAudio:
         self.utilities.SetDefaultDevice(device, roles=[ERole(role)])
 
 
-def start(interval=1.0):
+def start(interval=1.0, enabled=lambda: True):
     """后台线程每秒检查一次；音频 API 不可用时只提示，不影响手柄桥接。"""
     def run():
         try:
@@ -75,6 +75,8 @@ def start(interval=1.0):
             print(f"Audio guard disabled: {error!r}", flush=True)
             return
         while not stop.wait(interval):
+            if not enabled():
+                continue
             try:
                 guard.check()
             except Exception as error:

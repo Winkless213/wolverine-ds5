@@ -1,8 +1,13 @@
 import base64
+import collections
+import io
+import queue
 import unittest
 from unittest.mock import Mock
 
-from gip_bridge import Haptics, NullOutput, attach_virtual_ds5, input_due, reconnect_loop, supervise
+from gip_bridge import (Haptics, NullOutput, attach_virtual_ds5, drain, handle_command, input_due, read_commands,
+                        reconnect_loop, supervise)
+from settings import Settings
 
 
 ATTACHED = """Imported USB devices
@@ -11,6 +16,98 @@ Port 01: device in use at High Speed(480Mbps)
          Sony Corp. : DualSense wireless controller (PS5) (054c:0ce6)
            -> usbip://127.0.0.1:3240/1-1
 """
+
+
+class SettingsMixTests(unittest.TestCase):
+    def test_resistance_effect_does_not_vibrate_by_default(self):
+        # 0x21 在真 DS5 上是扳机阻力，不是震动；默认不转成纽扣马达震动。
+        output = Mock()
+        haptics = Haptics(output)
+        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        output.set.assert_not_called()
+
+    def test_vibration_effect_still_vibrates_without_resistance_mapping(self):
+        output = Mock()
+        haptics = Haptics(output)
+        haptics.accept(trigger_report(right_effect=bytes.fromhex("26c0030000481200003200")), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        self.assertAlmostEqual(output.set.call_args.args[3], 3 / 8)
+
+    def test_trigger_gain_zero_turns_trigger_motors_off(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_gain=0, trigger_resistance=True))
+        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        output.set.assert_not_called()
+
+    def test_grip_gain_scales_classic_rumble(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(grip_gain=.5))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        haptics.step(l2=0, r2=0, now=.001)
+        self.assertEqual(output.set.call_args.args[:2], (.5, .5))
+
+    def test_trigger_gain_scales_and_clamps_at_full(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_gain=1.5))
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        self.assertEqual(output.set.call_args.args[3], 1)
+
+    def test_trigger_follow_mirrors_same_side_grip(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_follow=True, follow_ratio=.5))
+        haptics.accept(rumble_report(0x03, right=0, left=255), now=0)
+        haptics.step(l2=0, r2=0, now=.001)
+        self.assertEqual(output.set.call_args.args, (1, 0, .5, 0))
+
+    def test_trigger_follow_keeps_stronger_trigger_effect(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_follow=True, follow_ratio=.2))
+        haptics.accept(rumble_report(0x03, right=255, left=0), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        self.assertEqual(output.set.call_args.args[3], 1)
+
+    def test_settings_command_applies_without_restart(self):
+        output = Mock()
+        haptics = Haptics(output)
+        self.assertFalse(handle_command(haptics, {"type": "settings", "settings": {"grip_gain": 0}}))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        haptics.step(l2=0, r2=0, now=.001)
+        output.set.assert_not_called()
+
+    def test_motor_test_pulses_one_motor_then_stops(self):
+        output = Mock()
+        haptics = Haptics(output)
+        handle_command(haptics, {"type": "test", "motor": 2})
+        haptics.step(l2=0, r2=0, now=.001)
+        self.assertEqual(output.set.call_args.args, (0, 0, .5, 0))
+        haptics.step(l2=0, r2=0, now=.03)
+        haptics.step(l2=0, r2=0, now=.7)
+        self.assertEqual(output.set.call_args.args, (0, 0, 0, 0))
+
+    def test_quit_command_requests_shutdown(self):
+        self.assertTrue(handle_command(Haptics(Mock()), {"type": "quit"}))
+
+    def test_invalid_test_motor_is_ignored(self):
+        haptics = Haptics(Mock())
+        handle_command(haptics, {"type": "test", "motor": 7})
+        self.assertIsNone(haptics.test_request)
+
+    def test_stdin_settings_reach_haptics_through_the_event_queue(self):
+        events = queue.Queue()
+        read_commands(io.StringIO('{"type": "settings", "settings": {"trigger_gain": 0}}\nnot json\n'), events)
+        haptics = Haptics(Mock())
+        drain(events, haptics, collections.Counter())
+        self.assertEqual(haptics.settings.trigger_gain, 0)
+
+    def test_stdin_quit_stops_the_bridge(self):
+        events = queue.Queue()
+        read_commands(io.StringIO('{"type": "quit"}\n'), events)
+        with self.assertRaises(KeyboardInterrupt):
+            drain(events, Haptics(Mock()), collections.Counter())
 
 
 class ReconnectTests(unittest.TestCase):
@@ -37,7 +134,7 @@ class ReconnectTests(unittest.TestCase):
 
     def test_trigger_effect_sent_while_disconnected_applies_after_reconnect(self):
         haptics = Haptics(NullOutput())
-        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
         output = Mock()
         haptics.attach(output)
         haptics.step(l2=0, r2=255, now=5)
@@ -101,13 +198,15 @@ def rumble_report(flag0, right, left, flag2=0):
 
 # 模式 0x21：全部 10 个区段最强（packed 3 位 = 7 → 1.0）；按原生比例还原后满幅 1.0。
 FULL_FEEDBACK = bytes((0x21, 0xFF, 0x03, 0xFF, 0xFF, 0xFF, 0x3F, 0, 0, 0, 0))
+# 模式 0x26：全部区段最强、50Hz（>20Hz 时降级为持续震动）。
+FULL_VIBRATION = bytes((0x26, 0xFF, 0x03, 0xFF, 0xFF, 0xFF, 0x3F, 0, 0, 0x32, 0))
 
 
 class HapticsTests(unittest.TestCase):
     def test_trigger_effect_drives_only_the_pressed_trigger_motor(self):
         output = Mock()
         haptics = Haptics(output)
-        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
         haptics.step(l2=0, r2=255, now=.001)
         left, right, lt, rt = output.set.call_args.args
         self.assertEqual((left, right, lt), (0, 0, 0))
@@ -124,7 +223,7 @@ class HapticsTests(unittest.TestCase):
     def test_stopped_capture_clears_all_four_motors(self):
         output = Mock()
         haptics = Haptics(output)
-        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
         haptics.step(l2=0, r2=255, now=.001)
         haptics.accept({"type": "stopped"}, now=.002)
         haptics.step(l2=0, r2=255, now=.025)
@@ -133,7 +232,7 @@ class HapticsTests(unittest.TestCase):
     def test_malformed_output_report_stops_motors_and_raises(self):
         output = Mock()
         haptics = Haptics(output)
-        haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
         haptics.step(l2=0, r2=255, now=.001)
         with self.assertRaises(ValueError):
             haptics.accept({"type": "output", "report": base64.b64encode(b"\x09").decode()}, now=.002)

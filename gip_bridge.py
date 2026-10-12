@@ -10,7 +10,9 @@ import threading
 import time
 
 import audio_guard
+import settings
 from gip_host import GipHost, UsbTransport
+from settings import Settings
 from trigger_mapper import TriggerPair
 from xusb_bridge import XusbBridge
 
@@ -31,11 +33,32 @@ class Haptics:
     GIP 路径按原生比例输出：游戏给多少强度，马达就出多少（满幅 = 100%），不另加上限。
     """
 
-    def __init__(self, output):
+    def __init__(self, output, settings=None):
         self.mapper = TriggerPair(gain=1)
         self.bridge = XusbBridge(output, limit=1)
+        self.bridge.mix = self.mix
+        self.settings = settings or Settings()
+        self.test_request = None
+        self.test_until = None
         self.stalls = 0
         self.audio_errors = 0
+
+    def mix(self, values, now):
+        left, right, lt, rt = values
+        grip, trigger = self.settings.grip_gain, self.settings.trigger_gain
+        left, right, lt, rt = (min(1, value * gain) for value, gain in
+                               ((left, grip), (right, grip), (lt, trigger), (rt, trigger)))
+        if self.settings.trigger_follow:
+            ratio = self.settings.follow_ratio
+            lt, rt = max(lt, left * ratio), max(rt, right * ratio)
+        if self.test_request is not None:
+            self.test_until = now + .5
+            self.test_motor, self.test_request = self.test_request, None
+        if self.test_until is not None:
+            if now < self.test_until:
+                return tuple(.5 if index == self.test_motor else 0 for index in range(4))
+            self.test_until = None
+        return left, right, lt, rt
 
     def attach(self, output):
         # 重连后的手柄马达是停的；清掉已发记录，让当前效果在下一轮立刻重发。
@@ -69,13 +92,29 @@ class Haptics:
                 self.bridge.next_frame = message["first_frame"] + message["frames"]
 
     def step(self, l2, r2, now):
+        triggers = self.mapper.sample(l2 / 255, r2 / 255, now)
+        if not self.settings.trigger_resistance:
+            # 阻力效果在纽扣马达上只能变成一下硬震，没有层次；只保留游戏明确要求的扳机震动。
+            triggers = tuple(value if trigger.effect.mode == 0x26 else 0
+                             for value, trigger in zip(triggers, (self.mapper.left, self.mapper.right)))
         try:
-            self.bridge.poll(self.mapper.sample(l2 / 255, r2 / 255, now), now=now)
+            self.bridge.poll(triggers, now=now)
         except TimeoutError:
             # 主循环卡顿（游戏加载、USB 读超时）时 poll 已把四路马达归零；
             # 长驻桥接不能因此退出，只计数并从下一轮继续。
             self.stalls += 1
             self.bridge.last_poll = None
+
+
+def handle_command(haptics, command):
+    """界面经 stdin 发来的控制消息；返回 True 表示应当退出。"""
+    if command.get("type") == "quit":
+        return True
+    if command.get("type") == "settings" and isinstance(command.get("settings"), dict):
+        haptics.settings = Settings.from_dict(command["settings"])
+    elif command.get("type") == "test" and command.get("motor") in (0, 1, 2, 3):
+        haptics.test_request = command["motor"]
+    return False
 
 
 def input_due(last_state, state, now, last_sent):
@@ -115,9 +154,25 @@ def attach_virtual_ds5(address, busid, run=subprocess.run):
     print(f"usbip attach: {(result.stdout or result.stderr).strip()}", flush=True)
 
 
+def read_commands(stream, events):
+    """界面通过 stdin 发 JSON 行；EOF 只表示没有界面（手动运行），不代表要退出。"""
+    for line in stream:
+        try:
+            command = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(command, dict):
+            events.put({"type": "command", "command": command})
+
+
 def drain(events, haptics, counts):
     while not events.empty():
         message = events.get_nowait()
+        if message["type"] == "command":
+            # 命令在主线程执行，和马达输出不会并发；quit 走与 Ctrl+C 相同的清理路径。
+            if handle_command(haptics, message["command"]):
+                raise KeyboardInterrupt
+            continue
         counts[message["type"]] += 1
         haptics.accept(message, now=message["_received_at"])
 
@@ -180,10 +235,11 @@ def serve(capture_proc):
 
     events = queue.Queue()
     threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
+    threading.Thread(target=read_commands, args=(sys.stdin, events), daemon=True).start()
     attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
-    audio_guard.start()
 
-    haptics = Haptics(NullOutput())
+    haptics = Haptics(NullOutput(), settings.load())
+    audio_guard.start(enabled=lambda: haptics.settings.audio_guard)
     counts = collections.Counter()
 
     def wait():

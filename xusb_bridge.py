@@ -14,6 +14,8 @@ class XusbBridge:
         self.ended = False
         self.grips = (0, 0)
         self.rumble = (0, 0)
+        # 可选的 (values, now) -> values；在限频与去重之前生效，去重比较的是实际下发值。
+        self.mix = None
         self.generation = self.next_frame = 0
         self.last_audio = self.last_poll = self.last_write = None
         self.previous = (0, 0, 0, 0)
@@ -90,6 +92,8 @@ class XusbBridge:
             self.stats["timeouts"] += 1
         # 传统震动（DS5 byte3/4）与音频触觉取较大者；音频超时只清音频，不清传统震动。
         values = (*(max(pair) for pair in zip(self.grips, self.rumble)), *triggers)
+        if self.mix:
+            values = self.mix(values, now)
         changed = values != self.previous
         ready = self.last_write is None or now - self.last_write >= .02
         refresh = any(values) and self.last_write is not None and now - self.last_write >= .1
