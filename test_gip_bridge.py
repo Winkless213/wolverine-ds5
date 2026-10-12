@@ -1,12 +1,13 @@
 import base64
 import collections
 import io
+import json
 import queue
 import unittest
 from unittest.mock import Mock
 
-from gip_bridge import (Haptics, NullOutput, attach_virtual_ds5, drain, handle_command, input_due, read_commands,
-                        reconnect_loop, supervise)
+from gip_bridge import (Haptics, NullOutput, Status, attach_virtual_ds5, drain, handle_command, input_due,
+                        read_commands, reconnect_loop, supervise)
 from settings import Settings
 
 
@@ -40,6 +41,29 @@ class SettingsMixTests(unittest.TestCase):
         haptics.accept(trigger_report(right_effect=FULL_FEEDBACK), now=0)
         haptics.step(l2=0, r2=255, now=.001)
         output.set.assert_not_called()
+
+    def test_trigger_switch_off_silences_trigger_motors_and_follow(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_enabled=False, trigger_follow=True, follow_ratio=1))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        self.assertEqual(output.set.call_args.args, (1, 1, 0, 0))
+
+    def test_grip_switch_off_silences_grips_but_keeps_triggers(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(grip_enabled=False))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
+        haptics.step(l2=0, r2=255, now=.001)
+        self.assertEqual(output.set.call_args.args, (0, 0, 0, 1))
+
+    def test_motor_test_still_works_with_motors_switched_off(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(grip_enabled=False, trigger_enabled=False))
+        handle_command(haptics, {"type": "test", "motor": 3})
+        haptics.step(l2=0, r2=0, now=.001)
+        self.assertEqual(output.set.call_args.args, (0, 0, 0, .5))
 
     def test_grip_gain_scales_classic_rumble(self):
         output = Mock()
@@ -108,6 +132,29 @@ class SettingsMixTests(unittest.TestCase):
         read_commands(io.StringIO('{"type": "quit"}\n'), events)
         with self.assertRaises(KeyboardInterrupt):
             drain(events, Haptics(Mock()), collections.Counter())
+
+
+class StatusTests(unittest.TestCase):
+    def test_status_is_emitted_only_when_it_changes(self):
+        lines = []
+        status = Status(lines.append)
+        status.set("waiting")
+        status.set("waiting")
+        status.set("connected", handshake_s=1.5)
+        self.assertEqual([json.loads(line) for line in lines],
+                         [{"type": "status", "state": "waiting"},
+                          {"type": "status", "state": "connected", "handshake_s": 1.5}])
+
+    def test_managed_bridge_quits_when_the_app_closes_stdin(self):
+        events = queue.Queue()
+        read_commands(io.StringIO(""), events, quit_on_eof=True)
+        with self.assertRaises(KeyboardInterrupt):
+            drain(events, Haptics(Mock()), collections.Counter())
+
+    def test_manual_bridge_ignores_stdin_eof(self):
+        events = queue.Queue()
+        read_commands(io.StringIO(""), events)
+        self.assertTrue(events.empty())
 
 
 class ReconnectTests(unittest.TestCase):

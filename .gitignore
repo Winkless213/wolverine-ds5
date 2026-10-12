@@ -6,3 +6,5 @@ dist/
 *.bak-*
 *.spec.bak
 VIIPER-source.zip
+bridge.cmd
+dev_bridge.py

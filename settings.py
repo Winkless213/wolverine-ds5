@@ -9,7 +9,9 @@ RANGES = {"grip_gain": (0.0, 1.5), "trigger_gain": (0.0, 1.5), "follow_ratio": (
 
 @dataclass(frozen=True)
 class Settings:
+    grip_enabled: bool = True
     grip_gain: float = 1.0
+    trigger_enabled: bool = True
     trigger_gain: float = 1.0
     # DS5 的 0x21/0x25 是扳机阻力（拉弓、扣扳机的“硬”感），纽扣马达只能硬震，默认不转换；
     # 0x26 本身就是扳机震动，始终转换。

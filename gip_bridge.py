@@ -45,12 +45,13 @@ class Haptics:
 
     def mix(self, values, now):
         left, right, lt, rt = values
-        grip, trigger = self.settings.grip_gain, self.settings.trigger_gain
+        grip = self.settings.grip_gain if self.settings.grip_enabled else 0
+        trigger = self.settings.trigger_gain if self.settings.trigger_enabled else 0
         left, right, lt, rt = (min(1, value * gain) for value, gain in
                                ((left, grip), (right, grip), (lt, trigger), (rt, trigger)))
-        if self.settings.trigger_follow:
+        if self.settings.trigger_follow and self.settings.trigger_enabled:
             ratio = self.settings.follow_ratio
-            lt, rt = max(lt, left * ratio), max(rt, right * ratio)
+            lt, rt = max(lt, values[0] * ratio), max(rt, values[1] * ratio)
         if self.test_request is not None:
             self.test_until = now + .5
             self.test_motor, self.test_request = self.test_request, None
@@ -154,8 +155,24 @@ def attach_virtual_ds5(address, busid, run=subprocess.run):
     print(f"usbip attach: {(result.stdout or result.stderr).strip()}", flush=True)
 
 
-def read_commands(stream, events):
-    """界面通过 stdin 发 JSON 行；EOF 只表示没有界面（手动运行），不代表要退出。"""
+class Status:
+    """给托盘程序的状态行：waiting / handshake / connected / lost，只在变化时输出。"""
+
+    def __init__(self, write=None):
+        self.write = write or (lambda line: print(line, flush=True))
+        self.state = None
+
+    def set(self, state, **details):
+        if state != self.state:
+            self.state = state
+            self.write(json.dumps({"type": "status", "state": state, **details}))
+
+
+STATUS = Status()
+
+
+def read_commands(stream, events, quit_on_eof=False):
+    """界面通过 stdin 发 JSON 行。手动运行时 EOF 不代表退出；由托盘托管时界面关闭就要停桥接。"""
     for line in stream:
         try:
             command = json.loads(line)
@@ -163,6 +180,8 @@ def read_commands(stream, events):
             continue
         if isinstance(command, dict):
             events.put({"type": "command", "command": command})
+    if quit_on_eof:
+        events.put({"type": "command", "command": {"type": "quit"}})
 
 
 def drain(events, haptics, counts):
@@ -188,6 +207,7 @@ def reconnect_loop(opener, session, wait, alive):
         try:
             return session(transport)
         except OSError as error:
+            STATUS.set("lost", error=repr(error))
             print(f"Controller lost ({error!r}); waiting for reconnect", file=sys.stderr, flush=True)
         finally:
             transport.close()
@@ -235,12 +255,14 @@ def serve(capture_proc):
 
     events = queue.Queue()
     threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
-    threading.Thread(target=read_commands, args=(sys.stdin, events), daemon=True).start()
+    threading.Thread(target=read_commands, args=(sys.stdin, events),
+                     kwargs={"quit_on_eof": bool(os.environ.get("WOLVERINE_MANAGED"))}, daemon=True).start()
     attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
 
     haptics = Haptics(NullOutput(), settings.load())
     audio_guard.start(enabled=lambda: haptics.settings.audio_guard)
     counts = collections.Counter()
+    STATUS.set("waiting")
 
     def wait():
         # 等手柄期间照常消费 capture 输出，重连后用的是最新扳机效果而不是积压的旧消息。
@@ -256,21 +278,24 @@ def serve(capture_proc):
 def session(transport, capture_proc, events, haptics, counts):
     gip = GipHost(transport)
     start = time.monotonic()
+    STATUS.set("handshake")
     print("Waiting for GIP handshake...", flush=True)
     while gip.phase != "ready":
         if time.monotonic() - start > 5:
+            STATUS.set("waiting", error="handshake timeout")
             raise TimeoutError("GIP handshake timeout; replug the controller if this repeats")
         gip.poll()
         drain(events, haptics, counts)
     print(f"GIP handshake complete in {time.monotonic() - start:.2f}s", flush=True)
     print("Bridge ready!", flush=True)
+    STATUS.set("connected", handshake_s=round(time.monotonic() - start, 2))
 
     haptics.attach(gip)
     peak_motors = [0, 0, 0, 0]
     last_state = None
     last_sent = 0
     input_updates = 0
-    last_stats = time.monotonic()
+    last_stats = last_meter = time.monotonic()
     try:
         while True:
             gip.poll(timeout_ms=4)
@@ -291,6 +316,12 @@ def session(transport, capture_proc, events, haptics, counts):
             peak_motors = [max(pair) for pair in zip(peak_motors, haptics.bridge.previous)]
 
             now = time.monotonic()
+            if os.environ.get("WOLVERINE_MANAGED") and now - last_meter >= .05:
+                print(json.dumps({"type": "meter", "motors": [round(value, 3) for value in haptics.bridge.previous],
+                                  "l2": state["L2"], "r2": state["R2"], "buttons": state["Buttons"],
+                                  "dpad": state["DPad"], "sticks": [state[axis] for axis in ("LX", "LY", "RX", "RY")]}),
+                      flush=True)
+                last_meter = now
             if now - last_stats >= 5.0:
                 elapsed = now - start
                 print(json.dumps({
