@@ -1,0 +1,284 @@
+"""GIP 输入 → wolverine-capture.exe → 虚拟 DS5 的完整桥接；DS5 输出经限幅映射回四马达。"""
+import base64
+import collections
+import json
+import os
+import queue
+import subprocess
+import sys
+import threading
+import time
+
+import audio_guard
+from gip_host import GipHost, UsbTransport
+from trigger_mapper import TriggerPair
+from xusb_bridge import XusbBridge
+
+
+class NullOutput:
+    """手柄断开期间的马达输出：丢弃写入，扳机效果等状态仍在 Haptics 里持续更新。"""
+
+    def set(self, left, right, lt, rt):
+        pass
+
+    def close(self):
+        pass
+
+
+class Haptics:
+    """与 run_capture 同一条输出链：扳机效果 + 音频触觉/传统震动 → 限频的四路马达。
+
+    GIP 路径按原生比例输出：游戏给多少强度，马达就出多少（满幅 = 100%），不另加上限。
+    """
+
+    def __init__(self, output):
+        self.mapper = TriggerPair(gain=1)
+        self.bridge = XusbBridge(output, limit=1)
+        self.stalls = 0
+        self.audio_errors = 0
+
+    def attach(self, output):
+        # 重连后的手柄马达是停的；清掉已发记录，让当前效果在下一轮立刻重发。
+        self.bridge.output = output
+        self.bridge.previous = (0, 0, 0, 0)
+        self.bridge.last_poll = self.bridge.last_write = None
+
+    def accept(self, message, now):
+        if message["type"] == "output":
+            report = base64.b64decode(message["report"], validate=True)
+            malformed = self.mapper.malformed_reports
+            self.mapper.update_report(report)
+            if self.mapper.malformed_reports != malformed:
+                self.bridge.stop()
+                raise ValueError("Malformed trigger report; physical output stopped")
+            # hid-playstation：flag0 bit0 或 flag2 bit2 表示 byte3（右）/byte4（左）有效。
+            if report[1] & 0x01 or len(report) > 39 and report[39] & 0x04:
+                limit = self.bridge.stats["amplitude_limit"]
+                self.bridge.rumble = (report[4] / 255 * limit, report[3] / 255 * limit)
+        elif message["type"] == "reset":
+            self.mapper.reset()
+        try:
+            self.bridge.accept(message, now=now)
+        except (ValueError, TimeoutError):
+            if message["type"] != "audio":
+                raise
+            # 游戏重开触觉流会让帧号跳变；只丢这一块并从新位置接上，不能拖垮输入链路。
+            self.audio_errors += 1
+            if message["generation"] >= self.bridge.generation:
+                self.bridge.generation = message["generation"]
+                self.bridge.next_frame = message["first_frame"] + message["frames"]
+
+    def step(self, l2, r2, now):
+        try:
+            self.bridge.poll(self.mapper.sample(l2 / 255, r2 / 255, now), now=now)
+        except TimeoutError:
+            # 主循环卡顿（游戏加载、USB 读超时）时 poll 已把四路马达归零；
+            # 长驻桥接不能因此退出，只计数并从下一轮继续。
+            self.stalls += 1
+            self.bridge.last_poll = None
+
+
+def input_due(last_state, state, now, last_sent):
+    # 手柄只在变化时上报；按住不动也要在 capture 的 250ms 看门狗松开按键前重发。
+    return state != last_state or now - last_sent >= .1
+
+
+def read_capture_output(proc, events):
+    """读取 wolverine-capture 的 stdout；震动在主线程下发，GipHost 不能跨线程写。"""
+    for line in proc.stdout:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            print(f"wolverine-capture output: {line.strip()}", flush=True)
+            continue
+        if msg.get("type") in ("output", "audio", "reset", "stopped"):
+            msg["_received_at"] = time.monotonic()
+            events.put(msg)
+        if msg.get("type") == "output" and os.environ.get("GIP_BRIDGE_DUMP_OUTPUT"):
+            print("output", base64.b64decode(msg["report"]).hex(), flush=True)
+        if msg.get("type") == "stopped":
+            print(f"wolverine-capture stopped: {msg}", flush=True)
+            break
+        elif msg.get("type") not in ("ready", "output", "audio", "reset"):
+            print(f"wolverine-capture: {msg}", flush=True)
+
+
+def attach_virtual_ds5(address, busid, run=subprocess.run):
+    """桥接重启后 usbip-win2 不会自动重新导入；本端已挂上时跳过，避免出现两个 DS5。"""
+    exe = os.environ.get("GIP_BRIDGE_USBIP_EXE", r"C:\Program Files\USBip\usbip.exe")
+    host, port = address.rsplit(":", 1)
+    ports = run([exe, "port"], capture_output=True, text=True).stdout
+    if f"usbip://{address}/{busid}" in ports:
+        print("Virtual DualSense already attached", flush=True)
+        return
+    result = run([exe, "-t", port, "attach", "-r", host, "-b", busid, "--once"], capture_output=True, text=True)
+    print(f"usbip attach: {(result.stdout or result.stderr).strip()}", flush=True)
+
+
+def drain(events, haptics, counts):
+    while not events.empty():
+        message = events.get_nowait()
+        counts[message["type"]] += 1
+        haptics.accept(message, now=message["_received_at"])
+
+
+def reconnect_loop(opener, session, wait, alive):
+    """拔线或握手失败时只重开手柄 USB；虚拟 DS5 和 usbip 挂载不动，游戏不用重启。"""
+    while alive():
+        try:
+            transport = opener()
+        except (RuntimeError, OSError):
+            wait()
+            continue
+        try:
+            return session(transport)
+        except OSError as error:
+            print(f"Controller lost ({error!r}); waiting for reconnect", file=sys.stderr, flush=True)
+        finally:
+            transport.close()
+        wait()
+    return 1
+
+
+def main():
+    print("Starting GIP to DualSense bridge...", flush=True)
+    capture_proc = subprocess.Popen(
+        [os.environ.get("GIP_BRIDGE_CAPTURE_EXE", "./wolverine-capture.exe"), "-port", "3240", "-duration", "24h"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=sys.stderr,  # 让 stderr 直接输出，方便调试
+        text=True,
+        bufsize=1
+    )
+    try:
+        return serve(capture_proc)
+    except KeyboardInterrupt:
+        print("\nStopping bridge...", flush=True)
+        try:
+            capture_proc.stdin.write(json.dumps({"type": "quit"}) + "\n")
+            capture_proc.stdin.flush()
+            capture_proc.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return 0
+    finally:
+        if capture_proc.poll() is None:
+            capture_proc.terminate()
+            capture_proc.wait(timeout=2)
+
+
+def serve(capture_proc):
+    ready_line = capture_proc.stdout.readline()
+    if not ready_line:
+        print("ERROR: wolverine-capture failed to start", file=sys.stderr, flush=True)
+        return 1
+    ready_msg = json.loads(ready_line)
+    if ready_msg.get("type") != "ready":
+        print(f"ERROR: Unexpected message from wolverine-capture: {ready_msg}", file=sys.stderr, flush=True)
+        return 1
+    print(f"Virtual DualSense ready on {ready_msg['address']}, busid={ready_msg['busid']}", flush=True)
+
+    events = queue.Queue()
+    threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
+    attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
+    audio_guard.start()
+
+    haptics = Haptics(NullOutput())
+    counts = collections.Counter()
+
+    def wait():
+        # 等手柄期间照常消费 capture 输出，重连后用的是最新扳机效果而不是积压的旧消息。
+        end = time.monotonic() + 1
+        while time.monotonic() < end:
+            drain(events, haptics, counts)
+            time.sleep(.01)
+
+    return reconnect_loop(UsbTransport, lambda transport: session(transport, capture_proc, events, haptics, counts),
+                          wait, alive=lambda: capture_proc.poll() is None)
+
+
+def session(transport, capture_proc, events, haptics, counts):
+    gip = GipHost(transport)
+    start = time.monotonic()
+    print("Waiting for GIP handshake...", flush=True)
+    while gip.phase != "ready":
+        if time.monotonic() - start > 5:
+            raise TimeoutError("GIP handshake timeout; replug the controller if this repeats")
+        gip.poll()
+        drain(events, haptics, counts)
+    print(f"GIP handshake complete in {time.monotonic() - start:.2f}s", flush=True)
+    print("Bridge ready!", flush=True)
+
+    haptics.attach(gip)
+    peak_motors = [0, 0, 0, 0]
+    last_state = None
+    last_sent = 0
+    input_updates = 0
+    last_stats = time.monotonic()
+    try:
+        while True:
+            gip.poll(timeout_ms=4)
+            state = gip.state()
+            if input_due(last_state, state, time.monotonic(), last_sent):
+                try:
+                    capture_proc.stdin.write(json.dumps({"type": "input", "state": state}) + "\n")
+                    capture_proc.stdin.flush()
+                except BrokenPipeError:
+                    print("ERROR: wolverine-capture stdin broken", file=sys.stderr, flush=True)
+                    return 1
+                last_state = state
+                last_sent = time.monotonic()
+                input_updates += 1
+
+            drain(events, haptics, counts)
+            haptics.step(state["L2"], state["R2"], time.monotonic())
+            peak_motors = [max(pair) for pair in zip(peak_motors, haptics.bridge.previous)]
+
+            now = time.monotonic()
+            if now - last_stats >= 5.0:
+                elapsed = now - start
+                print(json.dumps({
+                    "elapsed_s": round(elapsed, 1),
+                    "gip_reports": gip.reports,
+                    "gip_hz": round(gip.reports / elapsed, 1),
+                    "input_updates": input_updates,
+                    "motors": haptics.bridge.previous,
+                    "peak_motors_5s": [round(value, 3) for value in peak_motors],
+                    "haptic_audio_frames": haptics.bridge.stats["audio_frames"],
+                    "haptic_audio_errors": haptics.audio_errors,
+                    "capture_messages": dict(counts),
+                    "unsupported_trigger_modes": sorted(haptics.mapper.unsupported_modes)
+                }), flush=True)
+                last_stats = now
+                peak_motors = [0, 0, 0, 0]
+
+            if capture_proc.poll() is not None:
+                print("ERROR: wolverine-capture exited", file=sys.stderr, flush=True)
+                return 1
+    finally:
+        haptics.attach(NullOutput())
+        try:
+            gip.set(0, 0, 0, 0)
+        except OSError:
+            pass
+
+
+def supervise(run=main, wait=time.sleep):
+    """桥接异常退出（拔线、握手超时、capture 退出）后自动重启；只有 Ctrl+C 结束。"""
+    while True:
+        try:
+            if run() == 0:
+                return 0
+        except KeyboardInterrupt:
+            return 0
+        except Exception as error:
+            print(f"ERROR: {error!r}", file=sys.stderr, flush=True)
+        print("Bridge stopped; restarting in 3s", file=sys.stderr, flush=True)
+        try:
+            wait(3)
+        except KeyboardInterrupt:
+            return 0
+
+
+if __name__ == "__main__":
+    sys.exit(supervise())

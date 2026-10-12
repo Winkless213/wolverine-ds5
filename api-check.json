@@ -1,0 +1,23 @@
+{
+  "verified_at": "2026-10-11T15:38:26+0800",
+  "source": "synthetic data over localhost USB/IP",
+  "synthetic_rear_pcm_exact": true,
+  "usbip_device_list_passed": true,
+  "usbip_rear_pcm_exact": true,
+  "trigger_report_exact": true,
+  "input_roundtrip": true,
+  "input_watchdog_neutral": true,
+  "audio_reopen_generation": true,
+  "identity": "054C:0CE6",
+  "interface_classes": [
+    1,
+    1,
+    1,
+    3
+  ],
+  "clean_shutdown": true,
+  "driver_installed": false,
+  "windows_device_mounted": false,
+  "game_capture_verified": false,
+  "physical_output": false
+}

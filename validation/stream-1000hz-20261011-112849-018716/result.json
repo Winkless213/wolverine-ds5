@@ -1,0 +1,269 @@
+{
+  "verified_at": "2026-10-11T11:28:49.021932+08:00",
+  "passed": true,
+  "fixture_source": "synthetic tones over a real localhost USB/IP socket",
+  "input_poll_hz": 1000,
+  "input_rate_clock": "synthetic PCM sample clock; not wall-clock throughput",
+  "hardware_report_rate_verified": false,
+  "hardware_output": false,
+  "provider_loaded": false,
+  "driver_installed": false,
+  "windows_device_mounted": false,
+  "game_capture_verified": false,
+  "physical_latency_measured": false,
+  "directory": "<repo>\\validation\\stream-1000hz-20261011-112849-018716",
+  "capture_binary_sha256": "cd2ab93b12c9f5a70b32a73c67842d213acafb42bbc31473bf8d38d6b2d2a1f0",
+  "cases": [
+    {
+      "name": "left80",
+      "generation": 3,
+      "input_tones": [
+        [
+          0.6,
+          80
+        ],
+        [
+          0,
+          160
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 8,
+          "frequency_hz": 79.5275590551181
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        }
+      ]
+    },
+    {
+      "name": "right160",
+      "generation": 3,
+      "input_tones": [
+        [
+          0,
+          80
+        ],
+        [
+          0.5,
+          160
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 6,
+          "frequency_hz": 158.18897637795277
+        }
+      ]
+    },
+    {
+      "name": "both",
+      "generation": 3,
+      "input_tones": [
+        [
+          0.6,
+          110
+        ],
+        [
+          0.3,
+          250
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 8,
+          "frequency_hz": 108.66141732283465
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 4,
+          "frequency_hz": 248.50393700787401
+        }
+      ]
+    },
+    {
+      "name": "quiet",
+      "generation": 3,
+      "input_tones": [
+        [
+          0,
+          110
+        ],
+        [
+          0,
+          250
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        }
+      ]
+    },
+    {
+      "name": "left30",
+      "generation": 3,
+      "input_tones": [
+        [
+          0.6,
+          30
+        ],
+        [
+          0,
+          40
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 8,
+          "frequency_hz": 30.0
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        }
+      ]
+    },
+    {
+      "name": "right40",
+      "generation": 3,
+      "input_tones": [
+        [
+          0,
+          30
+        ],
+        [
+          0.5,
+          40
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 6,
+          "frequency_hz": 38.74015748031496
+        }
+      ]
+    },
+    {
+      "name": "reopen-right200",
+      "generation": 5,
+      "input_tones": [
+        [
+          0,
+          80
+        ],
+        [
+          0.5,
+          200
+        ]
+      ],
+      "decoded": [
+        {
+          "bodypart": 216,
+          "amplitude_code": 0,
+          "frequency_hz": null
+        },
+        {
+          "bodypart": 116,
+          "amplitude_code": 6,
+          "frequency_hz": 198.9763779527559
+        }
+      ]
+    }
+  ],
+  "pcm_blocks": 840,
+  "exact_rear_pcm": true,
+  "input_frames": 40320,
+  "clean_shutdown": true,
+  "input_updates": 840,
+  "input_report_checks": 845,
+  "held_input_reports": 0,
+  "input_watchdog_neutral": true,
+  "audio_timeout_silent": true,
+  "pcm_sha256": "a6a20221cd6d7c65a4a6950e926194cd1bab2e506e57d3155e054038bac255b1",
+  "parameter_frames_sha256": "2fde4e9f1d7f67685dd6bccb1cf48ecda4c78fd4b927209759306b2c9ca1fe7f",
+  "host_dropped_frames": 0,
+  "host_control_drops": 0,
+  "preview": {
+    "hardware_output": false,
+    "provider_loaded": false,
+    "completed": true,
+    "game_capture_verified": false,
+    "physical_latency_measured": false,
+    "arbitrary_pcm_verified": false,
+    "har_sha256": "ed774be3b3fac9d3dad0d75c8ad2e95d019fec1c4720b77957ce434e468c807e",
+    "algorithm": "independent stereo dominant tone; phase and secondary tones discarded",
+    "analysis_window_ms": 40.0,
+    "hop_ms": 4.0,
+    "timeout_ms": 50,
+    "parameter_frames": 210,
+    "input_frames": 40320,
+    "missing_frames": 0,
+    "stale_blocks": 0,
+    "duplicate_blocks": 0,
+    "invalid_blocks": 0,
+    "discarded_tail_frames": 0,
+    "timeouts": 1,
+    "resets": 3,
+    "encoded_duration_ms_counts": {
+      "60": 216
+    },
+    "stop_returned_empty": true,
+    "frame_processing_us": {
+      "p50": 362.85,
+      "p95": 868.7699999999999,
+      "p99": 978.7269999999999,
+      "max": 1200.7
+    },
+    "timing_scope": "Emission-block processing, HAR readback and file write only; excludes analysis history, input wait, USB, Provider and motors"
+  },
+  "recording": {
+    "frames": 40320,
+    "missing_frames": 0,
+    "stale_blocks": 0,
+    "duplicate_blocks": 0,
+    "files": [
+      "usb-host-0003.wav",
+      "usb-host-0005.wav"
+    ],
+    "peak": [
+      0.5999755859375,
+      0.5
+    ],
+    "sum_squares": [
+      3068.3535914057866,
+      2430.616529817693
+    ],
+    "rms": [
+      0.27586235602087783,
+      0.24552626755798387
+    ]
+  },
+  "wall_seconds": 1.3034025999950245
+}

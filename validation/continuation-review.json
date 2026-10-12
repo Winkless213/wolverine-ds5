@@ -1,0 +1,44 @@
+{
+  "existing_go_source_preserved": true,
+  "go_files_checked": 701,
+  "baseline_source_zip_sha256": "03c74be0228dbeca8b8552a11690e3606c4f0f82b22492eeb388b919a4dbefff",
+  "baseline_source_manifest": "<workspace>\\work\\source-build-20261011-024328\\SOURCE-MANIFEST.json",
+  "source_manifest_sha256": "e70d38da47d7e27cee177e8c6170913816faca68cc4842bc6dce5b501f262fa0",
+  "git_status": [
+    "## feat/wolverine-raw-haptics",
+    " M device/dualsense/device.go",
+    "?? cmd/wolverine-capture/",
+    "?? device/dualsense/raw_haptics_capture.go",
+    "?? device/dualsense/raw_haptics_capture_test.go"
+  ],
+  "prototype_modified": [
+    "api_check.py",
+    "capture_recorder.py",
+    "README.md",
+    "Run.ps1",
+    "run_capture.py",
+    "sensa_api_check.py",
+    "test_run_capture.py",
+    "test_sensa_offline.py"
+  ],
+  "prototype_added": [
+    "pcm_to_sensa.py",
+    "sensa_mapping_check.py",
+    "sensa_preview.py",
+    "sensa_stream_check.py",
+    "test_pcm_to_sensa.py",
+    "test_sensa_preview.py"
+  ],
+  "prototype_unchanged": [
+    "sdl_input.py",
+    "sensa_frame.py",
+    "sensa_offline.py",
+    "test_api_check.py",
+    "test_capture_recorder.py",
+    "test_sdl_input.py",
+    "test_sensa_frame.py",
+    "test_trigger_mapper.py",
+    "trigger_mapper.py"
+  ],
+  "encoding_and_line_endings_preserved": true
+}

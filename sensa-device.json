@@ -1,0 +1,30 @@
+{
+  "DeviceName": "Sage T1",
+  "Manufacturer": "Razer",
+  "NumberBodyPart": 2,
+  "StreamBodyType": 1,
+  "TargetingType": 1,
+  "Version": "1.0",
+  "Bodypart": [
+    {
+      "BodypartID": 216,
+      "Perception": 1,
+      "Characteristics": {
+        "Resolution": {"AllEqual": 1, "Angle": 1, "Height": 1, "Offset": 0},
+        "ValueReport": [{"ActuatorType": 2, "FrequencyMax": 400, "FrequencyMin": 30,
+                         "FrequencyResonance": 50, "Height": 0, "Theta": 0}]
+      },
+      "StreamCharacteristics": {"Bands": 3, "Points": 4, "Transients": 2}
+    },
+    {
+      "BodypartID": 116,
+      "Perception": 1,
+      "Characteristics": {
+        "Resolution": {"AllEqual": 1, "Angle": 1, "Height": 1, "Offset": 0},
+        "ValueReport": [{"ActuatorType": 2, "FrequencyMax": 400, "FrequencyMin": 30,
+                         "FrequencyResonance": 50, "Height": 0, "Theta": 0}]
+      },
+      "StreamCharacteristics": {"Bands": 3, "Points": 4, "Transients": 2}
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "verified_at": "2026-10-11T07:38:24.980640+00:00",
+  "nonzero_hardware_output": false,
+  "game_chain_verified": false,
+  "checks": [
+    {
+      "name": "prototype",
+      "exit_code": 0,
+      "log": "<repo>\\validation\\xusb-prototype.log",
+      "sha256": "4df297a04f7b6f4b3f108b654ff340c11b4f0859466276ea0f2a9e36bd43c49a",
+      "tests": 63
+    },
+    {
+      "name": "bench",
+      "exit_code": 0,
+      "log": "<repo>\\validation\\xusb-bench.log",
+      "sha256": "272606b17bf5bb01dc4b1679d308f1eb96482022ec24946924fd9fb7f82c3f76",
+      "tests": 30
+    },
+    {
+      "name": "bridge-idle",
+      "exit_code": 0,
+      "log": "<repo>\\validation\\xusb-bridge-idle.log",
+      "sha256": "d6315bc468b0e2ce536565bd153a463ec206b91c22b39595c86284f1160b9072",
+      "run": {
+        "directory": "<repo>\\runs\\20261011-153827-493738",
+        "completed": true,
+        "recorded_frames": 0,
+        "error": null,
+        "hardware_output": false
+      }
+    }
+  ],
+  "source_hashes": {
+    "run_capture.py": "c515c764927ebddca4c3ff3f223b2cf889863dfd1549a0ebb1147e8d0bf070f4",
+    "sdl_input.py": "0fc8cf549590cc2eeef39e7b2f212a5551e27d95ec145df26cbb71a7a5c04f18",
+    "xusb_output.py": "25ef614a5db5367440bfb8875a20418a0224b83821246362e35ea0474e211cfe",
+    "xusb_bridge.py": "b6772aee86125fd0ad6e72fd4e1fdb34c004b1b4b1bcba0e787c214c018b6988",
+    "Run.ps1": "6d19f50c0fdc60b209d961e522e2681437c90edec7d431eb2ec98ef491c3bab1"
+  },
+  "passed": true
+}

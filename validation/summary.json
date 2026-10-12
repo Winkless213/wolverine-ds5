@@ -1,0 +1,51 @@
+{
+  "verified_at": "2026-10-11T11:28:40.640844+08:00",
+  "hardware_output": false,
+  "game_capture_verified": false,
+  "physical_latency_measured": false,
+  "cases": [
+    {
+      "name": "hardware-bench-entry",
+      "exit_code": 0,
+      "seconds": 0.4529999999940628,
+      "log": "hardware-bench-entry.log",
+      "log_sha256": "ffcda09c772ff21b71370f073dcf7818950344b9b6dc581858eb57dab241fbe1"
+    },
+    {
+      "name": "python-and-api",
+      "exit_code": 0,
+      "seconds": 5.093000000008033,
+      "log": "python-and-api.log",
+      "log_sha256": "3d148226c277423183a7d35f40101be965b1c141f3f7601f479efda96a9de237"
+    },
+    {
+      "name": "capture-synthetic-250hz",
+      "exit_code": 0,
+      "seconds": 0.5629999999946449,
+      "log": "capture-synthetic-250hz.log",
+      "log_sha256": "4e06038ff0c6dd606ade4058b98135ab9a948a03678628c047315f368d7d9c00"
+    },
+    {
+      "name": "capture-synthetic-1000hz",
+      "exit_code": 0,
+      "seconds": 0.5470000000059372,
+      "log": "capture-synthetic-1000hz.log",
+      "log_sha256": "985abb019709025981509cc27c69b6782e5edd8560fbfbfdc0b949d7cf1739c1"
+    },
+    {
+      "name": "continuous-sensa",
+      "exit_code": 0,
+      "seconds": 3.311999999990803,
+      "log": "continuous-sensa.log",
+      "log_sha256": "e2ab93f4634195a3f45360698afa85a0a15abb4fffe3eca7d8e50559705da828"
+    },
+    {
+      "name": "go-tests",
+      "exit_code": 0,
+      "seconds": 1.6880000000091968,
+      "log": "go-tests.log",
+      "log_sha256": "b2f716dee8f3ee2931658a6116d1a278ccd3c6b5b7bc664315fcb2c4d6cf3331"
+    }
+  ],
+  "passed": true
+}

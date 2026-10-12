@@ -1,0 +1,16 @@
+{
+  "started": "2026-10-12T11:40:13.886872",
+  "phase": "ready",
+  "reports": 815,
+  "pulses": [],
+  "error": null,
+  "received": {
+    "0x03": 3,
+    "0x04": 6,
+    "0x01": 4,
+    "0x06": 28,
+    "0x20": 815
+  },
+  "handshake_s": 2.359,
+  "report_hz": 54.3
+}

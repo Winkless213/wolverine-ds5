@@ -1,0 +1,41 @@
+{
+  "previous_delivery_preserved": true,
+  "previous_archive_sha256": "a6c9621d64a6864477b4e073df9bc6de9f89e58501e00f39b9b91200a6e52f3e",
+  "stream_pcm_and_parameter_bytes_unchanged": true,
+  "encoding_and_line_endings_preserved": true,
+  "hardware_output": false,
+  "changes": [
+    {
+      "path": "prototype/README.md",
+      "sha256": "ede30d1b66e87f52cfb3cc021a1a40597f7e2e01a48457a5a00c93d125b1a62c"
+    },
+    {
+      "path": "prototype/sensa_api_check.py",
+      "sha256": "f4e8496e21d5ac2824ccb736cc96e6664ee34800670b34fcbba1ce7cfa3e67e4"
+    },
+    {
+      "path": "prototype/sensa_preview.py",
+      "sha256": "db56bb376ca05b03053aef2c365a90329877d419fd6572f92a4821e3acfd686e"
+    },
+    {
+      "path": "prototype/test_sensa_offline.py",
+      "sha256": "d319cabddfc5d5c6ad8ca3b73984c1cd83902359bb125751adbc555f00a7655f"
+    },
+    {
+      "path": "prototype/test_sensa_preview.py",
+      "sha256": "13569a78f17500ece23eae3d4bacf19ff654828c4ea67ee1998c78e3c6643501"
+    },
+    {
+      "path": "research-report.md",
+      "sha256": "1f5ab88ad005397da87381c44023231fe62a0e3b63802c9058d3313690e0053d"
+    },
+    {
+      "path": "work/haptic_bench.py",
+      "sha256": "6403edc728e1ece8528c7c375605d4b4843f737cfc141856e51de1223cfe9aa7"
+    },
+    {
+      "path": "work/test_haptic_bench.py",
+      "sha256": "89edeabefc34301e35dec43e6017c4d5d0730ba6ceb28f1e2c41192569956ba6"
+    }
+  ]
+}

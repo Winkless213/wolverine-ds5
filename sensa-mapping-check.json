@@ -1,0 +1,111 @@
+{
+  "verified_at": "2026-10-11T11:28:50.540437+08:00",
+  "passed": true,
+  "hardware_output": false,
+  "physical_latency_measured": false,
+  "scope": "Deterministic PCM-to-parameter characterization, before HAR quantization; not waveform or hardware fidelity",
+  "acceptance": "Listed 30..400 Hz fixtures: <=5 Hz frequency error, <=0.01 amplitude error at gain 0.22 after warmup, no silent frames/right leakage; silence within one complete hop",
+  "cases": [
+    {
+      "input_hz": 30,
+      "max_steady_frequency_error_hz": 0.0,
+      "max_steady_amplitude_error": 1.246736152765715e-05,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 40,
+      "max_steady_frequency_error_hz": 0.0,
+      "max_steady_amplitude_error": 1.0440112952564418e-05,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 60,
+      "max_steady_frequency_error_hz": 0.0,
+      "max_steady_amplitude_error": 5.771534529158684e-06,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 80,
+      "max_steady_frequency_error_hz": 0.031045547517408068,
+      "max_steady_amplitude_error": 9.621138271739826e-05,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 110,
+      "max_steady_frequency_error_hz": 0.02726514037647121,
+      "max_steady_amplitude_error": 5.265303000073773e-05,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 160,
+      "max_steady_frequency_error_hz": 0.0127100667845923,
+      "max_steady_amplitude_error": 1.4943031940994889e-05,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 200,
+      "max_steady_frequency_error_hz": 0.0070732790974830095,
+      "max_steady_amplitude_error": 6.71201216356776e-06,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 250,
+      "max_steady_frequency_error_hz": 0.0015123572451045675,
+      "max_steady_amplitude_error": 3.907738507918923e-06,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 320,
+      "max_steady_frequency_error_hz": 0.003782151497318864,
+      "max_steady_amplitude_error": 4.834471047515665e-06,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    },
+    {
+      "input_hz": 400,
+      "max_steady_frequency_error_hz": 0.0,
+      "max_steady_amplitude_error": 5.426353807402862e-06,
+      "unexpected_steady_silent_frames": 0,
+      "first_nonzero_ms": 4.0,
+      "right_channel_nonzero_frames": 0
+    }
+  ],
+  "multitone_input": [
+    [
+      0.2,
+      80
+    ],
+    [
+      0.6,
+      240
+    ]
+  ],
+  "multitone_output": {
+    "bodypart": 216,
+    "amplitude": 0.13194484471918425,
+    "frequency_hz": 239.98974016154955
+  },
+  "secondary_tones_preserved": false,
+  "phase_preserved": false,
+  "amplitude_step_160hz_within_10_percent_ms": 4.0,
+  "silence_after_complete_zero_hop_ms": 4,
+  "analysis_window_ms": 40,
+  "note": "Narrow low-frequency tones use a sine/cosine/DC least-squares fit after warmup; complex waveforms remain approximate"
+}

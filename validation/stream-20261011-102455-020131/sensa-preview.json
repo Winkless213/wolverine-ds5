@@ -1,0 +1,30 @@
+{
+  "hardware_output": false,
+  "provider_loaded": false,
+  "completed": true,
+  "game_capture_verified": false,
+  "physical_latency_measured": false,
+  "arbitrary_pcm_verified": false,
+  "har_sha256": "ed774be3b3fac9d3dad0d75c8ad2e95d019fec1c4720b77957ce434e468c807e",
+  "algorithm": "independent stereo dominant tone; phase and secondary tones discarded",
+  "analysis_window_ms": 40.0,
+  "hop_ms": 4.0,
+  "timeout_ms": 50,
+  "parameter_frames": 150,
+  "input_frames": 28800,
+  "missing_frames": 0,
+  "stale_blocks": 0,
+  "duplicate_blocks": 0,
+  "invalid_blocks": 0,
+  "discarded_tail_frames": 0,
+  "timeouts": 0,
+  "resets": 3,
+  "stop_returned_empty": true,
+  "frame_processing_us": {
+    "p50": 238.35000000000002,
+    "p95": 375.5999999999995,
+    "p99": 498.7049999999997,
+    "max": 3389.1
+  },
+  "timing_scope": "Emission-block processing, HAR readback and file write only; excludes analysis history, input wait, USB, Provider and motors"
+}

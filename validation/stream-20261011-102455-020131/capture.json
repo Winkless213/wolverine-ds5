@@ -1,0 +1,22 @@
+{
+  "frames": 28800,
+  "missing_frames": 0,
+  "stale_blocks": 0,
+  "duplicate_blocks": 0,
+  "files": [
+    "usb-host-0003.wav",
+    "usb-host-0005.wav"
+  ],
+  "peak": [
+    0.5999755859375,
+    0.5
+  ],
+  "sum_squares": [
+    2053.3510559853166,
+    1703.7575280060992
+  ],
+  "rms": [
+    0.2670148154431825,
+    0.2432246852196787
+  ]
+}

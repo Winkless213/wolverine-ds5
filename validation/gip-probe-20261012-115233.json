@@ -1,0 +1,16 @@
+{
+  "started": "2026-10-12T11:52:31.223301",
+  "phase": "auth",
+  "reports": 0,
+  "pulses": [],
+  "error": "GipAuthError: Device rejected handshake step 0x05",
+  "received": {
+    "0x10": 2,
+    "0x02": 1,
+    "0x03": 1,
+    "0x04": 10,
+    "0x01": 4,
+    "0x06": 23,
+    "0x00": 1
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "hardware_output": false,
+  "physical_latency_measured": false,
+  "changed_variable": "Envelope estimator only; identical phase-continuous 160 Hz PCM and frequency tracker",
+  "reference_step_ms": 28.0,
+  "current_step_ms": 4.0,
+  "scope": "Sample-clock amplitude response, not wall-clock or physical latency"
+}
