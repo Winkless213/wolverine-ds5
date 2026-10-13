@@ -38,8 +38,8 @@ class Haptics:
         self.bridge = XusbBridge(output, limit=1)
         self.bridge.mix = self.mix
         self.settings = settings or Settings()
-        self.test_request = None
-        self.test_until = None
+        self.test_target = None
+        self.test_pressure = (0, 0)
         self.stalls = 0
         self.audio_errors = 0
 
@@ -52,13 +52,11 @@ class Haptics:
         if self.settings.trigger_follow and self.settings.trigger_enabled:
             ratio = self.settings.follow_ratio
             lt, rt = max(lt, values[0] * ratio), max(rt, values[1] * ratio)
-        if self.test_request is not None:
-            self.test_until = now + .5
-            self.test_motor, self.test_request = self.test_request, None
-        if self.test_until is not None:
-            if now < self.test_until:
-                return tuple(.5 if index == self.test_motor else 0 for index in range(4))
-            self.test_until = None
+        if self.test_target is not None:
+            # 测试模式：LT/RT 的按压深度只驱动被测的一组马达（按当前强度），游戏输出与跟随全部屏蔽，避免串。
+            gain = self.settings.grip_gain if self.test_target == "grip" else self.settings.trigger_gain
+            pair = tuple(min(1, value * gain) for value in self.test_pressure)
+            return (*pair, 0, 0) if self.test_target == "grip" else (0, 0, *pair)
         return left, right, lt, rt
 
     def attach(self, output):
@@ -93,6 +91,7 @@ class Haptics:
                 self.bridge.next_frame = message["first_frame"] + message["frames"]
 
     def step(self, l2, r2, now):
+        self.test_pressure = (l2 / 255, r2 / 255)
         triggers = self.mapper.sample(l2 / 255, r2 / 255, now)
         if not self.settings.trigger_resistance:
             # 阻力效果在纽扣马达上只能变成一下硬震，没有层次；只保留游戏明确要求的扳机震动。
@@ -113,8 +112,8 @@ def handle_command(haptics, command):
         return True
     if command.get("type") == "settings" and isinstance(command.get("settings"), dict):
         haptics.settings = Settings.from_dict(command["settings"])
-    elif command.get("type") == "test" and command.get("motor") in (0, 1, 2, 3):
-        haptics.test_request = command["motor"]
+    elif command.get("type") == "test" and command.get("target") in ("grip", "trigger", None):
+        haptics.test_target = command["target"]
     return False
 
 

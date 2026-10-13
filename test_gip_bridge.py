@@ -59,12 +59,33 @@ class SettingsMixTests(unittest.TestCase):
         haptics.step(l2=0, r2=255, now=.001)
         self.assertEqual(output.set.call_args.args, (0, 0, 0, 1))
 
-    def test_motor_test_still_works_with_motors_switched_off(self):
+    def test_grip_test_maps_lt_rt_to_grips_and_silences_everything_else(self):
+        # 测试握把时按 LT/RT 只震左/右握把；游戏效果和扳机跟随都不能串进来。
         output = Mock()
-        haptics = Haptics(output, Settings(grip_enabled=False, trigger_enabled=False))
-        handle_command(haptics, {"type": "test", "motor": 3})
-        haptics.step(l2=0, r2=0, now=.001)
+        haptics = Haptics(output, Settings(grip_enabled=False, trigger_follow=True, follow_ratio=1))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        haptics.accept(trigger_report(right_effect=FULL_VIBRATION), now=0)
+        handle_command(haptics, {"type": "test", "target": "grip"})
+        haptics.step(l2=255, r2=0, now=.001)
+        self.assertEqual(output.set.call_args.args, (1, 0, 0, 0))
+
+    def test_trigger_test_maps_lt_rt_to_trigger_motors_with_gain(self):
+        output = Mock()
+        haptics = Haptics(output, Settings(trigger_gain=.5))
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        handle_command(haptics, {"type": "test", "target": "trigger"})
+        haptics.step(l2=0, r2=255, now=.001)
         self.assertEqual(output.set.call_args.args, (0, 0, 0, .5))
+
+    def test_ending_the_test_restores_game_output(self):
+        output = Mock()
+        haptics = Haptics(output)
+        haptics.accept(rumble_report(0x03, right=255, left=255), now=0)
+        handle_command(haptics, {"type": "test", "target": "grip"})
+        haptics.step(l2=0, r2=0, now=.001)
+        handle_command(haptics, {"type": "test", "target": None})
+        haptics.step(l2=0, r2=0, now=.03)
+        self.assertEqual(output.set.call_args.args, (1, 1, 0, 0))
 
     def test_grip_gain_scales_classic_rumble(self):
         output = Mock()
@@ -103,23 +124,13 @@ class SettingsMixTests(unittest.TestCase):
         haptics.step(l2=0, r2=0, now=.001)
         output.set.assert_not_called()
 
-    def test_motor_test_pulses_one_motor_then_stops(self):
-        output = Mock()
-        haptics = Haptics(output)
-        handle_command(haptics, {"type": "test", "motor": 2})
-        haptics.step(l2=0, r2=0, now=.001)
-        self.assertEqual(output.set.call_args.args, (0, 0, .5, 0))
-        haptics.step(l2=0, r2=0, now=.03)
-        haptics.step(l2=0, r2=0, now=.7)
-        self.assertEqual(output.set.call_args.args, (0, 0, 0, 0))
-
     def test_quit_command_requests_shutdown(self):
         self.assertTrue(handle_command(Haptics(Mock()), {"type": "quit"}))
 
-    def test_invalid_test_motor_is_ignored(self):
+    def test_invalid_test_target_is_ignored(self):
         haptics = Haptics(Mock())
-        handle_command(haptics, {"type": "test", "motor": 7})
-        self.assertIsNone(haptics.test_request)
+        handle_command(haptics, {"type": "test", "target": "speaker"})
+        self.assertIsNone(haptics.test_target)
 
     def test_stdin_settings_reach_haptics_through_the_event_queue(self):
         events = queue.Queue()

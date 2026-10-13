@@ -124,21 +124,25 @@ class AppTests(unittest.TestCase):
         self.assertEqual(notes, ["connected", "lost"])
         self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
 
-    def test_each_test_button_pulses_only_its_motor(self):
+    def test_grip_and_trigger_tests_are_exclusive(self):
         app, bridge, _, _ = self.make_app()
         bridge.status.emit({"type": "status", "state": "connected"})
         page = app.window.vibration_page
-        for button, motor in ((page.test_buttons[2], 2), (page.test_buttons[0], 0)):
-            button.click()
-            self.assertEqual(json.loads(bridge.sent[-1]), {"type": "test", "motor": motor})
-        self.assertEqual(len(bridge.sent), 2)
+        page.grip_test.button.click()
+        page.trigger_test.button.click()
+        page.trigger_test.button.click()
+        self.assertEqual([json.loads(line)["target"] for line in bridge.sent], ["grip", "trigger", None])
+        self.assertEqual(page.grip_test.button.text(), "开始测试")
 
-    def test_test_buttons_need_a_connected_controller(self):
+    def test_test_needs_a_connection_and_ends_on_disconnect(self):
         app, bridge, _, _ = self.make_app()
         page = app.window.vibration_page
-        self.assertFalse(any(button.isEnabled() for button in page.test_buttons))
+        self.assertFalse(page.grip_test.button.isEnabled())
         bridge.status.emit({"type": "status", "state": "connected"})
-        self.assertTrue(all(button.isEnabled() for button in page.test_buttons))
+        page.grip_test.button.click()
+        bridge.status.emit({"type": "status", "state": "lost"})
+        self.assertEqual(json.loads(bridge.sent[-1]), {"type": "test", "target": None})
+        self.assertFalse(page.grip_test.button.isEnabled())
 
     def test_meter_updates_the_motor_bars(self):
         app, bridge, _, _ = self.make_app()

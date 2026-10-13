@@ -189,6 +189,22 @@ class SliderCard(SettingCard):
         self.hBoxLayout.addSpacing(16)
 
 
+class TestCard(SettingCard):
+    """进入测试后由 LT / RT 的按压深度驱动这一组马达，再点一次结束。"""
+
+    def __init__(self, title, idle, active, parent=None):
+        super().__init__(FluentIcon.PLAY, title, idle, parent)
+        self.idle, self.active = idle, active
+        self.button = PushButton("开始测试", self)
+        self.button.setEnabled(False)
+        self.hBoxLayout.addWidget(self.button, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def set_active(self, active):
+        self.button.setText("结束测试" if active else "开始测试")
+        self.setContent(self.active if active else self.idle)
+
+
 class Page(ScrollArea):
     def __init__(self, name, title, parent=None):
         super().__init__(parent)
@@ -270,7 +286,7 @@ class StatusPage(Page):
 
 class VibrationPage(Page):
     changed = Signal(dict)
-    test_requested = Signal(int)
+    test_requested = Signal(object)
 
     def __init__(self, settings, parent=None):
         super().__init__("vibration", "震动", parent)
@@ -280,6 +296,9 @@ class VibrationPage(Page):
                                     settings.grip_gain, 150, grip)
         for card in (self.grip_enabled, self.grip_gain):
             grip.addSettingCard(card)
+        self.grip_test = TestCard("测试握把", "按 LT / RT 分别震左 / 右握把，按得越深越强",
+                                  "测试中：按 LT 震左握把、RT 震右握把；游戏震动与扳机马达已暂停", grip)
+        grip.addSettingCard(self.grip_test)
 
         trigger = SettingCardGroup("扳机马达", self.view)
         self.trigger_enabled = SwitchCard(FluentIcon.GAME, "扳机震动", "LT / RT 里的小马达",
@@ -296,22 +315,18 @@ class VibrationPage(Page):
         for card in (self.trigger_enabled, self.trigger_gain, self.trigger_resistance, self.trigger_follow,
                      self.follow_ratio):
             trigger.addSettingCard(card)
-
-        test = SettingCardGroup("测试", self.view)
-        self.test = SettingCard(FluentIcon.PLAY, "单独测试马达", "点哪路震哪路，每次 0.5 秒", test)
-        self.test_buttons = []
-        for motor, label in enumerate(Meter.LABELS):
-            button = PushButton(label, self.test)
-            button.setEnabled(False)
-            button.clicked.connect(lambda _=False, motor=motor: self.test_requested.emit(motor))
-            self.test.hBoxLayout.addWidget(button, 0, Qt.AlignmentFlag.AlignRight)
-            self.test.hBoxLayout.addSpacing(8)
-            self.test_buttons.append(button)
-        self.test.hBoxLayout.addSpacing(8)
-        test.addSettingCard(self.test)
-        for group in (grip, trigger, test):
+        self.trigger_test = TestCard("测试扳机", "按 LT / RT 分别震左 / 右扳机，按得越深越强",
+                                     "测试中：按 LT 震左扳机、RT 震右扳机；游戏震动与握把马达已暂停", trigger)
+        trigger.addSettingCard(self.trigger_test)
+        for group in (grip, trigger):
             self.column.addWidget(group)
         self.column.addStretch(1)
+
+        self.testing = None
+        for target, card in (("grip", self.grip_test), ("trigger", self.trigger_test)):
+            # 同一时间只测一组：点另一组直接切过去，再点当前组结束测试。
+            card.button.clicked.connect(
+                lambda _=False, target=target: self.test_requested.emit(None if self.testing == target else target))
 
         for key in ("grip_enabled", "trigger_enabled", "trigger_resistance", "trigger_follow"):
             getattr(self, key).switch.checkedChanged.connect(lambda checked, key=key: self._emit(key, checked))
@@ -331,8 +346,13 @@ class VibrationPage(Page):
         self.follow_ratio.setEnabled(trigger and self.trigger_follow.switch.isChecked())
 
     def set_testable(self, enabled):
-        for button in self.test_buttons:
-            button.setEnabled(enabled)
+        for card in (self.grip_test, self.trigger_test):
+            card.button.setEnabled(enabled)
+
+    def set_test(self, target):
+        self.testing = target
+        self.grip_test.set_active(target == "grip")
+        self.trigger_test.set_active(target == "trigger")
 
 
 class DevicePage(Page):

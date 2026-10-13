@@ -79,7 +79,7 @@ class App(QObject):
         pages = self.window
         pages.status_page.toggle_requested.connect(self._toggle)
         pages.vibration_page.changed.connect(self.update_settings)
-        pages.vibration_page.test_requested.connect(self._test_motor)
+        pages.vibration_page.test_requested.connect(self._test)
         pages.device_page.changed.connect(self.update_settings)
         pages.device_page.autostart_changed.connect(self._set_autostart)
         pages.device_page.driver_action.connect(self.switch_driver)
@@ -176,6 +176,8 @@ class App(QObject):
         page.mode_card.setContent(MODE_TEXT[self.mode])
         self.window.device_page.show_mode(self.mode, self.busy)
         self.window.vibration_page.set_testable(connected)
+        if not connected and self.window.vibration_page.testing:
+            self._test(None)
         if connected and self.connected_at is None:
             self.connected_at = time.monotonic()
         elif not connected:
@@ -231,8 +233,9 @@ class App(QObject):
         if actual != enabled:
             self.window.device_page.autostart.switch.setChecked(actual)
 
-    def _test_motor(self, motor):
-        self.bridge.send(json.dumps({"type": "test", "motor": motor}))
+    def _test(self, target):
+        self.bridge.send(json.dumps({"type": "test", "target": target}))
+        self.window.vibration_page.set_test(target)
 
     # ---- 驱动切换 ----
 
