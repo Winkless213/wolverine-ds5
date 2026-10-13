@@ -270,7 +270,7 @@ class StatusPage(Page):
 
 class VibrationPage(Page):
     changed = Signal(dict)
-    test_requested = Signal()
+    test_requested = Signal(int)
 
     def __init__(self, settings, parent=None):
         super().__init__("vibration", "震动", parent)
@@ -298,12 +298,16 @@ class VibrationPage(Page):
             trigger.addSettingCard(card)
 
         test = SettingCardGroup("测试", self.view)
-        self.test = SettingCard(FluentIcon.PLAY, "测试四路马达", "左握把、右握把、左扳机、右扳机依次各震 0.5 秒", test)
-        self.test_button = PushButton("开始测试", self.test)
-        self.test_button.setEnabled(False)
-        self.test_button.clicked.connect(self.test_requested)
-        self.test.hBoxLayout.addWidget(self.test_button, 0, Qt.AlignmentFlag.AlignRight)
-        self.test.hBoxLayout.addSpacing(16)
+        self.test = SettingCard(FluentIcon.PLAY, "单独测试马达", "点哪路震哪路，每次 0.5 秒", test)
+        self.test_buttons = []
+        for motor, label in enumerate(Meter.LABELS):
+            button = PushButton(label, self.test)
+            button.setEnabled(False)
+            button.clicked.connect(lambda _=False, motor=motor: self.test_requested.emit(motor))
+            self.test.hBoxLayout.addWidget(button, 0, Qt.AlignmentFlag.AlignRight)
+            self.test.hBoxLayout.addSpacing(8)
+            self.test_buttons.append(button)
+        self.test.hBoxLayout.addSpacing(8)
         test.addSettingCard(self.test)
         for group in (grip, trigger, test):
             self.column.addWidget(group)
@@ -327,7 +331,8 @@ class VibrationPage(Page):
         self.follow_ratio.setEnabled(trigger and self.trigger_follow.switch.isChecked())
 
     def set_testable(self, enabled):
-        self.test_button.setEnabled(enabled)
+        for button in self.test_buttons:
+            button.setEnabled(enabled)
 
 
 class DevicePage(Page):

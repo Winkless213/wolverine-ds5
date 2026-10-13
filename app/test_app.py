@@ -124,12 +124,21 @@ class AppTests(unittest.TestCase):
         self.assertEqual(notes, ["connected", "lost"])
         self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
 
-    def test_motor_test_runs_each_motor_in_order(self):
+    def test_each_test_button_pulses_only_its_motor(self):
         app, bridge, _, _ = self.make_app()
-        app.window.vibration_page.test_requested.emit()
-        self.assertTrue(wait_for(lambda: len(bridge.sent) >= 4, timeout=5))
-        self.assertEqual([json.loads(line) for line in bridge.sent],
-                         [{"type": "test", "motor": motor} for motor in range(4)])
+        bridge.status.emit({"type": "status", "state": "connected"})
+        page = app.window.vibration_page
+        for button, motor in ((page.test_buttons[2], 2), (page.test_buttons[0], 0)):
+            button.click()
+            self.assertEqual(json.loads(bridge.sent[-1]), {"type": "test", "motor": motor})
+        self.assertEqual(len(bridge.sent), 2)
+
+    def test_test_buttons_need_a_connected_controller(self):
+        app, bridge, _, _ = self.make_app()
+        page = app.window.vibration_page
+        self.assertFalse(any(button.isEnabled() for button in page.test_buttons))
+        bridge.status.emit({"type": "status", "state": "connected"})
+        self.assertTrue(all(button.isEnabled() for button in page.test_buttons))
 
     def test_meter_updates_the_motor_bars(self):
         app, bridge, _, _ = self.make_app()
