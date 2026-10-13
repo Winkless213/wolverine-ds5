@@ -155,15 +155,30 @@ def describe(running, wanted, status, mode):
 
 
 def find_controller():
-    """返回 (实例 ID, 当前驱动服务)；没插时返回 (None, None)。"""
-    script = (f"Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -like '{DEVICE_PREFIX}\\*' }} | "
-              "ForEach-Object { $_.InstanceId + '|' + $_.Service }")
-    output = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
-    if not output:
+    """返回 (实例 ID, 当前驱动服务)；没插时返回 (None, None)。
+
+    cfgmgr32 只列在线设备，单次约 1ms，可以放在界面定时器里轮询（Get-PnpDevice 每次要 1 秒以上）。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    cfg = ctypes.WinDLL("cfgmgr32")
+    flags = 0x101  # CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_PRESENT
+    size = wintypes.ULONG()
+    if cfg.CM_Get_Device_ID_List_SizeW(ctypes.byref(size), "USB", flags) or not size.value:
         return None, None
-    instance, _, service = output.splitlines()[0].partition("|")
-    return instance, service
+    buffer = ctypes.create_unicode_buffer(size.value)
+    if cfg.CM_Get_Device_ID_ListW("USB", buffer, size, flags):
+        return None, None
+    for instance in buffer[:size.value].split("\0"):
+        if instance.upper().startswith(DEVICE_PREFIX.upper() + "\\"):
+            devinst = wintypes.DWORD()
+            service = ctypes.create_unicode_buffer(256)
+            length = wintypes.ULONG(ctypes.sizeof(service))
+            if not cfg.CM_Locate_DevNodeW(ctypes.byref(devinst), instance, 0):
+                cfg.CM_Get_DevNode_Registry_PropertyW(devinst, 0x5, None, service, ctypes.byref(length), 0)  # SERVICE
+            return instance, service.value or None
+    return None, None
 
 
 def restore_xbox_script(instance_id):
