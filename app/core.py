@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -31,7 +32,9 @@ def bridge_command(frozen=None, executable=None, root=None):
     executable = executable or sys.executable
     if frozen:
         return [executable, "--bridge"]
-    return [executable, "-u", str((root or root_dir()) / "gip_bridge.py")]
+    # pythonw 没有标准输出句柄，桥接子进程必须用控制台版 python（由 QProcess 隐藏窗口）。
+    console = re.sub(r"pythonw\.exe$", "python.exe", executable, flags=re.IGNORECASE)
+    return [console, "-u", str((root or root_dir()) / "gip_bridge.py")]
 
 
 def parse_line(line):
@@ -99,6 +102,56 @@ def prune_logs(directory, keep=7):
     logs = sorted(pathlib.Path(directory).glob("bridge-*.log"))
     for path in logs[:-keep]:
         path.unlink(missing_ok=True)
+
+
+def usbip_attached(port_output, address="127.0.0.1:3240", busid="1-1"):
+    return f"usbip://{address}/{busid}" in port_output
+
+
+def usbip_ports():
+    exe = os.environ.get("GIP_BRIDGE_USBIP_EXE", r"C:\Program Files\USBip\usbip.exe")
+    try:
+        return subprocess.run([exe, "port"], capture_output=True, text=True, timeout=5,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def driver_mode(service):
+    if not service:
+        return "absent"
+    return "bridge" if service.lower() == "winusb" else "xbox"
+
+
+def format_duration(seconds):
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+
+def describe(running, wanted, status, mode):
+    """托盘图标和状态页共用：(图标状态, 标题, 说明)。"""
+    if not wanted:
+        if mode is None:
+            return "waiting", "正在检测手柄", ""
+        detail = "手柄当前是 Xbox 模式，可直接当 Xbox 手柄用" if mode == "xbox" else "已手动停止，可在托盘菜单启动"
+        return "stopped", "桥接已停止", detail
+    if not running:
+        return "error", "桥接异常退出", "正在自动重启，详情见日志"
+    state = status.get("state")
+    if state == "connected":
+        return "connected", "已连接", f"握手 {status.get('handshake_s', 0)} 秒"
+    if state == "handshake":
+        return "waiting", "正在握手", "通常 2 秒内完成"
+    if "handshake timeout" in status.get("error", ""):
+        return "waiting", "等待手柄", "握手超时，多次出现请拔插一次数据线"
+    if state == "lost":
+        return "waiting", "手柄已断开", "重新插上即可恢复，游戏无需重启"
+    if mode == "absent":
+        return "waiting", "等待手柄", "请用数据线连接手柄，并切到 Xbox 模式"
+    if mode == "xbox":
+        return "waiting", "等待手柄", "手柄仍是 Xbox 驱动，请在“设备”页切换到桥接模式"
+    return "waiting", "等待手柄", "正在连接"
 
 
 def find_controller():

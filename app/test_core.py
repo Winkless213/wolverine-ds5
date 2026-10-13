@@ -7,8 +7,52 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from app.core import (AUTOSTART_NAME, BridgeEvents, autostart_command, bridge_command, parse_line,
-                      prune_logs, restore_xbox_script)
+from app.core import (AUTOSTART_NAME, BridgeEvents, autostart_command, bridge_command, describe, driver_mode,
+                      format_duration, parse_line, prune_logs, restore_xbox_script, usbip_attached)
+
+
+class DisplayTests(unittest.TestCase):
+    def test_virtual_ds5_is_attached_only_when_our_busid_is_imported(self):
+        output = "Port 01: <device in use> at Super Speed(5000Mbps)\n       -> usbip://127.0.0.1:3240/1-1\n"
+        self.assertTrue(usbip_attached(output))
+        self.assertFalse(usbip_attached(output.replace("1-1", "1-2")))
+        self.assertFalse(usbip_attached(""))
+
+    def test_driver_service_maps_to_mode(self):
+        self.assertEqual(driver_mode("WinUSB"), "bridge")
+        self.assertEqual(driver_mode("dc1-controller"), "xbox")
+        self.assertEqual(driver_mode(None), "absent")
+
+    def test_duration_is_compact(self):
+        self.assertEqual(format_duration(65), "01:05")
+        self.assertEqual(format_duration(3725), "1:02:05")
+
+
+class DescribeTests(unittest.TestCase):
+    def test_connected_shows_handshake_time(self):
+        self.assertEqual(describe(True, True, {"state": "connected", "handshake_s": 1.78}, "bridge"),
+                         ("connected", "已连接", "握手 1.78 秒"))
+
+    def test_xbox_mode_is_a_deliberate_stop_not_an_error(self):
+        key, title, detail = describe(False, False, {}, "xbox")
+        self.assertEqual((key, title), ("stopped", "桥接已停止"))
+        self.assertIn("Xbox 模式", detail)
+
+    def test_bridge_dying_unexpectedly_is_an_error(self):
+        self.assertEqual(describe(False, True, {"state": "connected"}, "bridge")[0], "error")
+
+    def test_repeated_handshake_timeouts_suggest_replugging(self):
+        # reconnect_loop 把 TimeoutError（OSError 子类）再报成 lost，提示要按错误内容判断。
+        status = {"state": "lost", "error": "TimeoutError('GIP handshake timeout; replug the controller')"}
+        key, title, detail = describe(True, True, status, "bridge")
+        self.assertEqual((key, title), ("waiting", "等待手柄"))
+        self.assertIn("拔插", detail)
+
+    def test_lost_controller_reassures_game_keeps_running(self):
+        self.assertIn("无需重启", describe(True, True, {"state": "lost"}, "bridge")[2])
+
+    def test_before_the_first_device_probe_it_is_still_detecting(self):
+        self.assertEqual(describe(False, False, {}, None)[:2], ("waiting", "正在检测手柄"))
 
 
 class ParseLineTests(unittest.TestCase):
@@ -48,6 +92,10 @@ class CommandTests(unittest.TestCase):
     def test_frozen_bridge_reuses_the_app_executable(self):
         self.assertEqual(bridge_command(frozen=True, executable="C:/WolverineDS5.exe", root=None),
                          ["C:/WolverineDS5.exe", "--bridge"])
+
+    def test_bridge_uses_console_python_even_when_the_app_runs_windowless(self):
+        command = bridge_command(frozen=False, executable="C:/Python314/pythonw.exe", root=pathlib.Path("C:/app"))
+        self.assertEqual(command[0], "C:/Python314/python.exe")
 
     def test_autostart_launches_minimised_to_tray(self):
         self.assertTrue(autostart_command(["C:/WolverineDS5.exe"]).endswith('"C:/WolverineDS5.exe" --tray'))
