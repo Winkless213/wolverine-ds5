@@ -4,8 +4,9 @@ import io
 import json
 import queue
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import gip_bridge
 from gip_bridge import (Haptics, NullOutput, Status, attach_virtual_ds5, drain, handle_command, input_due,
                         read_commands, reconnect_loop, supervise)
 from settings import Settings
@@ -155,6 +156,30 @@ class StatusTests(unittest.TestCase):
         events = queue.Queue()
         read_commands(io.StringIO(""), events)
         self.assertTrue(events.empty())
+
+
+class ProcessCommandTests(unittest.TestCase):
+    """桥接内部重启（supervise）后，界面发来的设置仍要送达新一轮会话。"""
+
+    def test_commands_from_the_process_reader_reach_a_fresh_session(self):
+        commands = queue.Queue()
+        read_commands(io.StringIO('{"type": "settings", "settings": {"grip_gain": 0.2}}\n'), commands)
+        haptics = Haptics(Mock())
+        drain(queue.Queue(), haptics, collections.Counter(), commands=commands)
+        self.assertEqual(haptics.settings.grip_gain, 0.2)
+
+    def test_restarted_serve_does_not_start_a_second_stdin_reader(self):
+        # 两个线程同时读 stdin 会把命令分走，被旧会话的队列吞掉。
+        capture = Mock()
+        capture.stdout.readline.return_value = '{"type": "ready", "address": "127.0.0.1:3240", "busid": "1-1"}\n'
+        with patch.object(gip_bridge, "threading") as threading, \
+                patch.object(gip_bridge, "attach_virtual_ds5"), patch.object(gip_bridge.audio_guard, "start"), \
+                patch.object(gip_bridge.settings, "load", return_value=Settings()), \
+                patch.object(gip_bridge, "reconnect_loop", return_value=1):
+            gip_bridge.serve(capture)
+            gip_bridge.serve(capture)
+        targets = [call.kwargs.get("target") for call in threading.Thread.call_args_list]
+        self.assertNotIn(read_commands, targets)
 
 
 class ReconnectTests(unittest.TestCase):

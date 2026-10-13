@@ -169,6 +169,8 @@ class Status:
 
 
 STATUS = Status()
+# 界面经 stdin 发来的命令；整个进程只有一个读线程，supervise 重启会话后命令也不会落进旧队列。
+COMMANDS = queue.Queue()
 
 
 def read_commands(stream, events, quit_on_eof=False):
@@ -184,16 +186,17 @@ def read_commands(stream, events, quit_on_eof=False):
         events.put({"type": "command", "command": {"type": "quit"}})
 
 
-def drain(events, haptics, counts):
-    while not events.empty():
-        message = events.get_nowait()
-        if message["type"] == "command":
-            # 命令在主线程执行，和马达输出不会并发；quit 走与 Ctrl+C 相同的清理路径。
-            if handle_command(haptics, message["command"]):
-                raise KeyboardInterrupt
-            continue
-        counts[message["type"]] += 1
-        haptics.accept(message, now=message["_received_at"])
+def drain(events, haptics, counts, commands=None):
+    for source in (COMMANDS if commands is None else commands, events):
+        while not source.empty():
+            message = source.get_nowait()
+            if message["type"] == "command":
+                # 命令在主线程执行，和马达输出不会并发；quit 走与 Ctrl+C 相同的清理路径。
+                if handle_command(haptics, message["command"]):
+                    raise KeyboardInterrupt
+                continue
+            counts[message["type"]] += 1
+            haptics.accept(message, now=message["_received_at"])
 
 
 def reconnect_loop(opener, session, wait, alive):
@@ -255,8 +258,6 @@ def serve(capture_proc):
 
     events = queue.Queue()
     threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
-    threading.Thread(target=read_commands, args=(sys.stdin, events),
-                     kwargs={"quit_on_eof": bool(os.environ.get("WOLVERINE_MANAGED"))}, daemon=True).start()
     attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
 
     haptics = Haptics(NullOutput(), settings.load())
@@ -367,5 +368,12 @@ def supervise(run=main, wait=time.sleep):
             return 0
 
 
+def run():
+    """进程入口：stdin 只开一个读线程，供 supervise 的每一轮会话共用。"""
+    threading.Thread(target=read_commands, args=(sys.stdin, COMMANDS),
+                     kwargs={"quit_on_eof": bool(os.environ.get("WOLVERINE_MANAGED"))}, daemon=True).start()
+    return supervise()
+
+
 if __name__ == "__main__":
-    sys.exit(supervise())
+    sys.exit(run())
