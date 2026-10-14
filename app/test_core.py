@@ -102,9 +102,10 @@ class CommandTests(unittest.TestCase):
         command = bridge_command(frozen=False, executable="python.exe", root=pathlib.Path("C:/app"))
         self.assertEqual(command, ["python.exe", "-u", str(pathlib.Path("C:/app/gip_bridge.py"))])
 
-    def test_frozen_bridge_reuses_the_app_executable(self):
-        self.assertEqual(bridge_command(frozen=True, executable="C:/WolverineDS5.exe", root=None),
-                         ["C:/WolverineDS5.exe", "--bridge"])
+    def test_frozen_bridge_is_the_console_exe_beside_the_app(self):
+        # 托盘程序无控制台；桥接用同目录的控制台版 exe，子进程（capture、usbip）才会继承隐藏的控制台。
+        self.assertEqual(bridge_command(frozen=True, executable="C:/W/WolverineDS5.exe", root=None),
+                         [str(pathlib.Path("C:/W/WolverineDS5-bridge.exe"))])
 
     def test_bridge_uses_console_python_even_when_the_app_runs_windowless(self):
         command = bridge_command(frozen=False, executable="C:/Python314/pythonw.exe", root=pathlib.Path("C:/app"))
@@ -113,7 +114,8 @@ class CommandTests(unittest.TestCase):
     def test_pc_mode_runs_the_sensa_bridge(self):
         command = bridge_command(frozen=False, executable="python.exe", root=pathlib.Path("C:/app"), pc=True)
         self.assertEqual(command[-1], str(pathlib.Path("C:/app/pc_bridge.py")))
-        self.assertEqual(bridge_command(frozen=True, executable="C:/W.exe", pc=True), ["C:/W.exe", "--bridge", "--pc"])
+        self.assertEqual(bridge_command(frozen=True, executable="C:/W.exe", pc=True),
+                         [str(pathlib.Path("C:/WolverineDS5-bridge.exe")), "--pc"])
 
     def test_hiding_whitelists_the_bridge_and_hides_only_the_pc_mode_gamepad(self):
         script = hidhide_script("C:/Python314/python.exe", hide=True)

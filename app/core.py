@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 AUTOSTART_NAME = "WolverineDS5"
+BRIDGE_EXE = "WolverineDS5-bridge.exe"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 DEVICE_PREFIXES = (r"USB\VID_1532&PID_0A3F", r"USB\VID_1532&PID_0A4C")
 PC_PRODUCT = "PID_0A4C"
@@ -35,7 +36,8 @@ def bridge_command(frozen=None, executable=None, root=None, pc=False):
     frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     executable = executable or sys.executable
     if frozen:
-        return [executable, "--bridge"] + (["--pc"] if pc else [])
+        # 托盘 exe 没有控制台；桥接是同目录的控制台版 exe，由 QProcess 隐藏窗口，capture、usbip 继承它。
+        return [str(pathlib.Path(executable).with_name(BRIDGE_EXE))] + (["--pc"] if pc else [])
     # pythonw 没有标准输出句柄，桥接子进程必须用控制台版 python（由 QProcess 隐藏窗口）。
     console = re.sub(r"pythonw\.exe$", "python.exe", executable, flags=re.IGNORECASE)
     return [console, "-u", str((root or root_dir()) / ("pc_bridge.py" if pc else "gip_bridge.py"))]
