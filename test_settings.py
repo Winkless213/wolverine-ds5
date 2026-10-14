@@ -25,8 +25,9 @@ class SettingsTests(unittest.TestCase):
     def test_hidden_devices_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "settings.json"
-            save(Settings(hidden_devices=("USB\\A", "USB\\B")), path)
+            save(Settings(hidden_devices=("USB\\A", "USB\\B"), hidden_app="C:/W/bridge.exe"), path)
             self.assertEqual(load(path).hidden_devices, ("USB\\A", "USB\\B"))
+            self.assertEqual(load(path).hidden_app, "C:/W/bridge.exe")
 
     def test_saved_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

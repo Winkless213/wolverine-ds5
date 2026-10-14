@@ -252,8 +252,22 @@ class PcModeTests(unittest.TestCase):
 
     def test_known_port_is_not_flagged(self):
         app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
-            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",)))
+            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",),
+            hidden_app=core.bridge_command(pc=True)[0]))
         self.assertNotIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
+        self.assertNotIn("放行", app.window.device_page.hide_physical.contentLabel.text())
+
+    def test_hiding_records_the_whitelisted_bridge(self):
+        app, _, _, path = self.make_app(mode="pc")
+        app._hide_done(0, True)
+        app.flush_save()
+        self.assertEqual(settings.load(path).hidden_app, core.bridge_command(pc=True)[0])
+
+    def test_bridge_not_whitelisted_by_hidhide_is_flagged(self):
+        # 换成打包版或挪了目录后，新桥接不在 HidHide 放行名单里，自己也读不到手柄。
+        app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
+            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",), hidden_app="C:/old/python.exe"))
+        self.assertIn("放行", app.window.device_page.hide_physical.contentLabel.text())
 
     def test_declined_uac_reverts_the_hide_switch(self):
         app, _, system, path = self.make_app(mode="pc")

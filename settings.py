@@ -24,13 +24,15 @@ class Settings:
     hide_physical: bool = False
     # 隐藏时已登记的 USB 端口实例；HidHide 按实例隐藏，换到新 USB 口的手柄不在其中，需要重新隐藏。
     hidden_devices: tuple = ()
+    # 隐藏时放行的桥接程序；换成打包版或挪了目录后，新桥接不在 HidHide 放行名单里，也读不到手柄。
+    hidden_app: str = ""
 
     @classmethod
     def from_dict(cls, data):
         values = {}
         for field in fields(cls):
             value = data.get(field.name)
-            if field.type is bool and type(value) is bool:
+            if (field.type is bool and type(value) is bool) or (field.type is str and type(value) is str):
                 values[field.name] = value
             elif field.type is float and type(value) in (int, float):
                 low, high = RANGES[field.name]

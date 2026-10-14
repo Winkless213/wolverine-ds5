@@ -95,7 +95,7 @@ class App(QObject):
 
     def start(self, show=True):
         if self.settings.hide_physical and not self.settings.hidden_devices:
-            # 旧版本没有登记端口；当时的脚本隐藏了已有的全部实例，按现有实例补登记。
+            # 旧版本没有登记端口；当时的脚本隐藏了已有的全部实例。放行程序无从得知，留空让界面提示重新开关。
             self.update_settings({"hidden_devices": tuple(self.system.pc_instances())})
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._make_tray()
@@ -117,15 +117,20 @@ class App(QObject):
             if not self.busy:
                 self._apply_mode()
         if changed:
-            if self._unhidden_port():
+            if self._hide_warning() == "port":
                 self.notify("new_port")
             self._refresh()
 
-    def _unhidden_port(self):
-        # HidHide 按设备实例隐藏，只覆盖开启时登记过的 USB 口。
+    def _hide_warning(self):
+        """HidHide 按设备实例隐藏、按程序路径放行；两者任一和当前不符，隐藏就不完整。"""
+        if self.mode != "pc" or not self.settings.hide_physical:
+            return None
         known = {device.upper() for device in self.settings.hidden_devices}
-        return (self.mode == "pc" and self.settings.hide_physical and bool(self.instance)
-                and self.instance.upper() not in known)
+        if self.instance and self.instance.upper() not in known:
+            return "port"
+        if self.settings.hidden_app.lower() != core.bridge_command(pc=True)[0].lower():
+            return "app"
+        return None
 
     def _apply_mode(self):
         # 拔线（变为 absent）时桥接继续跑，虚拟 DS5 不掉，游戏无需重启；Xbox 驱动下桥接用不了，停掉。
@@ -199,7 +204,7 @@ class App(QObject):
         page.show_state(key, title, detail, action, not self.busy and self.mode is not None)
         page.mode_card.setContent(MODE_TEXT[self.mode])
         self.window.device_page.show_mode(self.mode, self.busy)
-        self.window.device_page.show_hide_warning(self._unhidden_port())
+        self.window.device_page.show_hide_warning(self._hide_warning())
         self.window.vibration_page.set_pc_mode(self.mode == "pc")
         self.window.vibration_page.set_testable(connected)
         if not connected and self.window.vibration_page.testing:
@@ -276,7 +281,8 @@ class App(QObject):
     def _hide_done(self, code, hidden):
         if code == 0:
             self.update_settings({"hide_physical": hidden,
-                                  "hidden_devices": tuple(self.system.pc_instances()) if hidden else ()})
+                                  "hidden_devices": tuple(self.system.pc_instances()) if hidden else (),
+                                  "hidden_app": core.bridge_command(pc=True)[0] if hidden else ""})
             self._refresh()
             self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄",
                        "游戏里只会看到虚拟 DualSense" if hidden else "游戏可以再次直接读取实体手柄")

@@ -368,7 +368,8 @@ class VibrationPage(Page):
 
 
 HIDE_TEXT = "PC 模式下游戏只看到虚拟 DualSense，避免按键提示来回切换；需要 HidHide 和管理员权限"
-HIDE_NEW_PORT = "手柄接在开启隐藏后没用过的 USB 口，游戏可能又能看到它；请关闭再打开一次"
+HIDE_WARNINGS = {"port": "手柄接在开启隐藏后没用过的 USB 口，游戏可能又能看到它；请关闭再打开一次",
+                 "app": "当前桥接程序还没被 HidHide 放行，读不到被隐藏的手柄；请关闭再打开一次"}
 
 
 class DevicePage(Page):
@@ -433,8 +434,8 @@ class DevicePage(Page):
         self.driver_button.setEnabled(not busy and mode in ("bridge", "xbox"))
         self.driver_button.setHidden(mode == "pc")
 
-    def show_hide_warning(self, warn):
-        self.hide_physical.setContent(HIDE_NEW_PORT if warn else HIDE_TEXT)
+    def show_hide_warning(self, warning):
+        self.hide_physical.setContent(HIDE_WARNINGS.get(warning, HIDE_TEXT))
 
 
 class Window(FluentWindow):
