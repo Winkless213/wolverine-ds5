@@ -105,17 +105,19 @@ class PcmToSensa:
 
 ENVELOPE_FRAMES = 480
 ENVELOPE_GAIN = 1.2
-ENVELOPE_LIMIT = .6
+ENVELOPE_LIMIT = 1.0
 ENVELOPE_BAND = (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) >= 5) & (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) <= 400)
 ENVELOPE_FREQUENCIES = np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE)[ENVELOPE_BAND]
 
 
 def envelope_tone(samples, bodypart):
-    """10ms 峰值包络 ×1.2 作强度；主频含 30Hz 以下（DS5 触觉常在 12–23Hz），夹到 Sensa 的 30–400Hz。"""
+    """10ms 峰值包络 ×1.2 后开平方作强度：游戏多数触觉只有满幅的 2–5%，线性映射在握把上几乎摸不到。
+    主频含 30Hz 以下（DS5 触觉常在 12–23Hz），夹到 Sensa 的 30–400Hz。"""
     recent = samples[-ENVELOPE_FRAMES:]
-    amplitude = min(ENVELOPE_LIMIT, ENVELOPE_GAIN * float(np.sqrt(np.mean(recent ** 2))) * np.sqrt(2))
-    if amplitude <= .01:
+    level = ENVELOPE_GAIN * float(np.sqrt(np.mean(recent ** 2))) * np.sqrt(2)
+    if level <= .01:
         return {"bodypart": bodypart, "amplitude": 0.0, "frequency_hz": 80.0}
+    amplitude = min(ENVELOPE_LIMIT, float(np.sqrt(level)))
     spectrum = np.abs(np.fft.rfft((samples - samples.mean()) * np.hanning(len(samples)), n=FFT_SIZE))
     peak = float(ENVELOPE_FREQUENCIES[np.argmax(spectrum[ENVELOPE_BAND])])
     return {"bodypart": bodypart, "amplitude": amplitude, "frequency_hz": float(np.clip(peak, 30, 400))}

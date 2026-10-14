@@ -106,13 +106,17 @@ class EnvelopeTests(unittest.TestCase):
 
     def test_in_band_tones_keep_their_frequency_per_side(self):
         final = envelope(pcm_tones(((.3, 160),), ((.2, 80),)))[-1]["channels"]
-        for channel, frequency, amplitude in zip(final, (160, 80), (.36, .24)):
+        for channel, frequency, amplitude in zip(final, (160, 80), (.6, .49)):
             self.assertAlmostEqual(channel["frequency_hz"], frequency, delta=6)
             self.assertAlmostEqual(channel["amplitude"], amplitude, delta=.02)
         self.assertEqual([channel["bodypart"] for channel in final], [216, 116])
 
+    def test_weak_game_haptics_are_still_clearly_felt(self):
+        # 实测《死亡搁浅 2》游戏中多数触觉只有满幅 2% 左右。
+        self.assertGreater(envelope(pcm_tones(((.02, 20),)))[-1]["channels"][0]["amplitude"], .1)
+
     def test_full_scale_is_capped(self):
-        self.assertEqual(envelope(pcm_tones(((1, 60),)))[-1]["channels"][0]["amplitude"], .6)
+        self.assertEqual(envelope(pcm_tones(((1, 60),)))[-1]["channels"][0]["amplitude"], 1)
 
     def test_silence_and_noise_floor_stop_output(self):
         converter = EnvelopeToSensa()
