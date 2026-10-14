@@ -367,6 +367,10 @@ class VibrationPage(Page):
         self.trigger_test.set_active(target == "trigger")
 
 
+HIDE_TEXT = "PC 模式下游戏只看到虚拟 DualSense，避免按键提示来回切换；需要 HidHide 和管理员权限"
+HIDE_NEW_PORT = "手柄接在开启隐藏后没用过的 USB 口，游戏可能又能看到它；请关闭再打开一次"
+
+
 class DevicePage(Page):
     changed = Signal(dict)
     autostart_changed = Signal(bool)
@@ -391,8 +395,7 @@ class DevicePage(Page):
         self.audio_guard = SwitchCard(FluentIcon.SPEAKERS, "默认音频自动切回",
                                       "虚拟 DualSense 抢成默认音频设备时切回原设备，避免游戏声音让握把一直震",
                                       settings.audio_guard, system)
-        self.hide_physical = SwitchCard(FluentIcon.HIDE, "对游戏隐藏实体手柄",
-                                        "PC 模式下游戏只看到虚拟 DualSense，避免按键提示来回切换；需要 HidHide 和管理员权限",
+        self.hide_physical = SwitchCard(FluentIcon.HIDE, "对游戏隐藏实体手柄", HIDE_TEXT,
                                         settings.hide_physical, system)
         self.logs = SettingCard(FluentIcon.FOLDER, "日志", str(log_dir), system)
         logs_button = PushButton("打开目录", self.logs)
@@ -429,6 +432,9 @@ class DevicePage(Page):
         self.driver_button.setText("还原 Xbox 模式" if mode == "bridge" else "切换到桥接模式")
         self.driver_button.setEnabled(not busy and mode in ("bridge", "xbox"))
         self.driver_button.setHidden(mode == "pc")
+
+    def show_hide_warning(self, warn):
+        self.hide_physical.setContent(HIDE_NEW_PORT if warn else HIDE_TEXT)
 
 
 class Window(FluentWindow):

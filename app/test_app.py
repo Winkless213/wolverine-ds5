@@ -75,6 +75,9 @@ class FakeSystem:
     def find_controller(self):
         return (self.instance, self.service) if self.service else (None, None)
 
+    def pc_instances(self):
+        return [self.instance] if self.service else []
+
     def run_elevated(self, script):
         self.elevated.append(script)
         return self.elevated_code
@@ -223,6 +226,34 @@ class PcModeTests(unittest.TestCase):
         app.window.device_page.hide_physical.switch.setChecked(True)
         self.assertTrue(wait_for(lambda: settings.load(path).hide_physical, timeout=5))
         self.assertIn("--dev-hide", system.elevated[-1])
+        self.assertEqual(settings.load(path).hidden_devices, (system.instance,))
+
+    def test_controller_on_a_port_unknown_at_hide_time_is_flagged(self):
+        # HidHide 只隐藏开启时已存在的端口实例；换到新 USB 口后游戏又能看到实体手柄。
+        app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
+            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\OLD",)))
+        self.assertIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
+
+    def test_rehiding_clears_the_new_port_warning(self):
+        app, _, system, path = self.make_app(mode="pc", saved=settings.Settings(
+            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\OLD",)))
+        card = app.window.device_page.hide_physical
+        self.assertIn("USB 口", card.contentLabel.text())
+        app._hide_done(0, True)
+        self.assertNotIn("USB 口", card.contentLabel.text())
+        app._probe()
+        self.assertNotIn("USB 口", card.contentLabel.text())
+
+    def test_hide_saved_by_an_older_version_registers_existing_ports(self):
+        app, _, system, path = self.make_app(mode="pc", saved=settings.Settings(hide_physical=True))
+        self.assertNotIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
+        app.flush_save()
+        self.assertEqual(settings.load(path).hidden_devices, (system.instance,))
+
+    def test_known_port_is_not_flagged(self):
+        app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
+            hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",)))
+        self.assertNotIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
 
     def test_declined_uac_reverts_the_hide_switch(self):
         app, _, system, path = self.make_app(mode="pc")

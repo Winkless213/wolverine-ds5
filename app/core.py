@@ -164,23 +164,35 @@ def describe(running, wanted, status, mode):
     return "waiting", "等待手柄", "正在连接"
 
 
-def find_controller():
-    """返回 (实例 ID, 当前驱动服务)；没插时返回 (None, None)。
-
-    cfgmgr32 只列在线设备，单次约 1ms，可以放在界面定时器里轮询（Get-PnpDevice 每次要 1 秒以上）。
-    """
+def usb_instances(present=True):
+    """cfgmgr32 列出 USB 设备实例 ID，单次约 1ms；present=False 时包含已拔出的历史实例。"""
     import ctypes
     from ctypes import wintypes
 
     cfg = ctypes.WinDLL("cfgmgr32")
-    flags = 0x101  # CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_PRESENT
+    flags = 0x101 if present else 0x1  # CM_GETIDLIST_FILTER_ENUMERATOR (| CM_GETIDLIST_FILTER_PRESENT)
     size = wintypes.ULONG()
     if cfg.CM_Get_Device_ID_List_SizeW(ctypes.byref(size), "USB", flags) or not size.value:
-        return None, None
+        return []
     buffer = ctypes.create_unicode_buffer(size.value)
     if cfg.CM_Get_Device_ID_ListW("USB", buffer, size, flags):
-        return None, None
-    for instance in buffer[:size.value].split("\0"):
+        return []
+    return [instance for instance in buffer[:size.value].split("\0") if instance]
+
+
+def pc_instances():
+    """PC 模式手柄在各 USB 口留下的设备实例（含已拔出的），与 hidhide_script 隐藏的范围一致。"""
+    prefix = rf"USB\VID_1532&{PC_PRODUCT}" + "\\"
+    return [instance for instance in usb_instances(present=False) if instance.upper().startswith(prefix)]
+
+
+def find_controller():
+    """返回 (实例 ID, 当前驱动服务)；没插时返回 (None, None)。可以放在界面定时器里轮询（Get-PnpDevice 每次要 1 秒以上）。"""
+    import ctypes
+    from ctypes import wintypes
+
+    cfg = ctypes.WinDLL("cfgmgr32")
+    for instance in usb_instances():
         if instance.upper().startswith(tuple(prefix.upper() + "\\" for prefix in DEVICE_PREFIXES)):
             devinst = wintypes.DWORD()
             service = ctypes.create_unicode_buffer(256)

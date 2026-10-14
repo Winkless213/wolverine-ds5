@@ -26,12 +26,14 @@ from app.window import MODE_TEXT, Window, status_icon
 
 NOTICES = {"connected": ("手柄已连接", "虚拟 DualSense 已就绪"),
            "lost": ("手柄已断开", "重新插上即可恢复，游戏无需重启"),
-           "reconnected": ("手柄已重新连接", "震动与按键已恢复")}
+           "reconnected": ("手柄已重新连接", "震动与按键已恢复"),
+           "new_port": ("手柄换了 USB 口", "游戏可能又能看到实体手柄；请在“设备与系统”页把“对游戏隐藏实体手柄”关闭再打开")}
 
 
 class System:
     """真实的系统操作；测试里换成假对象。"""
     find_controller = staticmethod(core.find_controller)
+    pc_instances = staticmethod(core.pc_instances)
     autostart_enabled = staticmethod(core.autostart_enabled)
     set_autostart = staticmethod(core.set_autostart)
     run_elevated = staticmethod(core.run_elevated)
@@ -92,6 +94,9 @@ class App(QObject):
         pages.quit_requested.connect(self.quit)
 
     def start(self, show=True):
+        if self.settings.hide_physical and not self.settings.hidden_devices:
+            # 旧版本没有登记端口；当时的脚本隐藏了已有的全部实例，按现有实例补登记。
+            self.update_settings({"hidden_devices": tuple(self.system.pc_instances())})
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._make_tray()
         self._probe()
@@ -105,12 +110,22 @@ class App(QObject):
     def _probe(self):
         instance, service = self.system.find_controller()
         mode = core.driver_mode(service, instance)
+        changed = mode != self.mode or (instance or self.instance) != self.instance
         self.instance = instance or self.instance
         if mode != self.mode:
             self.mode = mode
             if not self.busy:
                 self._apply_mode()
+        if changed:
+            if self._unhidden_port():
+                self.notify("new_port")
             self._refresh()
+
+    def _unhidden_port(self):
+        # HidHide 按设备实例隐藏，只覆盖开启时登记过的 USB 口。
+        known = {device.upper() for device in self.settings.hidden_devices}
+        return (self.mode == "pc" and self.settings.hide_physical and bool(self.instance)
+                and self.instance.upper() not in known)
 
     def _apply_mode(self):
         # 拔线（变为 absent）时桥接继续跑，虚拟 DS5 不掉，游戏无需重启；Xbox 驱动下桥接用不了，停掉。
@@ -184,6 +199,7 @@ class App(QObject):
         page.show_state(key, title, detail, action, not self.busy and self.mode is not None)
         page.mode_card.setContent(MODE_TEXT[self.mode])
         self.window.device_page.show_mode(self.mode, self.busy)
+        self.window.device_page.show_hide_warning(self._unhidden_port())
         self.window.vibration_page.set_pc_mode(self.mode == "pc")
         self.window.vibration_page.set_testable(connected)
         if not connected and self.window.vibration_page.testing:
@@ -259,7 +275,9 @@ class App(QObject):
 
     def _hide_done(self, code, hidden):
         if code == 0:
-            self.update_settings({"hide_physical": hidden})
+            self.update_settings({"hide_physical": hidden,
+                                  "hidden_devices": tuple(self.system.pc_instances()) if hidden else ()})
+            self._refresh()
             self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄",
                        "游戏里只会看到虚拟 DualSense" if hidden else "游戏可以再次直接读取实体手柄")
             return

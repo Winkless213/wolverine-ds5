@@ -18,8 +18,15 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((settings.grip_gain, settings.trigger_gain, settings.follow_ratio), (1.5, 0.0, 1.0))
 
     def test_unknown_and_wrongly_typed_fields_fall_back_to_defaults(self):
-        settings = Settings.from_dict({"grip_gain": "loud", "trigger_follow": "yes", "colour": "red"})
+        settings = Settings.from_dict({"grip_gain": "loud", "trigger_follow": "yes", "colour": "red",
+                                       "hidden_devices": [1, "USB\\X"]})
         self.assertEqual(settings, Settings())
+
+    def test_hidden_devices_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "settings.json"
+            save(Settings(hidden_devices=("USB\\A", "USB\\B")), path)
+            self.assertEqual(load(path).hidden_devices, ("USB\\A", "USB\\B"))
 
     def test_saved_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

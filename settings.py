@@ -22,6 +22,8 @@ class Settings:
     audio_guard: bool = True
     # PC 模式下用 HidHide 对游戏隐藏实体手柄，只放行桥接；界面开关切换时经 UAC 写入 HidHide。
     hide_physical: bool = False
+    # 隐藏时已登记的 USB 端口实例；HidHide 按实例隐藏，换到新 USB 口的手柄不在其中，需要重新隐藏。
+    hidden_devices: tuple = ()
 
     @classmethod
     def from_dict(cls, data):
@@ -33,6 +35,8 @@ class Settings:
             elif field.type is float and type(value) in (int, float):
                 low, high = RANGES[field.name]
                 values[field.name] = min(high, max(low, float(value)))
+            elif field.type is tuple and isinstance(value, (list, tuple)) and all(type(v) is str for v in value):
+                values[field.name] = tuple(value)
         return cls(**values)
 
 
