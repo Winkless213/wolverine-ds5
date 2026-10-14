@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 import settings
+from app import core
 from app.bridge import Bridge
 from app.main import App
 from app.window import draw_status_icon
@@ -38,7 +39,13 @@ class FakeBridge(QObject):
         super().__init__()
         self.started = 0
         self.sent = []
+        self.command = []
+        self.pc = None
         self.is_running = False
+
+    def set_pc(self, pc):
+        self.pc = pc
+        self.command = core.bridge_command(frozen=False, executable="python.exe", pc=pc)
 
     def start(self):
         self.started += 1
@@ -58,12 +65,19 @@ class FakeBridge(QObject):
 
 class FakeSystem:
     def __init__(self, mode="bridge"):
-        self.service = {"bridge": "WINUSB", "xbox": "dc1-controller", "absent": None}[mode]
+        self.service = {"bridge": "WINUSB", "xbox": "dc1-controller", "pc": "usbccgp", "absent": None}[mode]
+        self.instance = "USB\\VID_1532&PID_0A4C\\TEST" if mode == "pc" else "USB\\VID_1532&PID_0A3F\\TEST"
         self.autostart = False
         self.opened = []
+        self.elevated = []
+        self.elevated_code = 0
 
     def find_controller(self):
-        return ("USB\\VID_1532&PID_0A3F\\TEST", self.service) if self.service else (None, None)
+        return (self.instance, self.service) if self.service else (None, None)
+
+    def run_elevated(self, script):
+        self.elevated.append(script)
+        return self.elevated_code
 
     def usbip_attached(self):
         return True
@@ -172,6 +186,52 @@ class AppTests(unittest.TestCase):
     def test_tray_icon_differs_per_state(self):
         images = [draw_status_icon(state, 32).toImage() for state in ("connected", "waiting", "error", "stopped")]
         self.assertEqual(len({image.pixelColor(16, 12).name() for image in images}), 4)
+
+
+class PcModeTests(unittest.TestCase):
+    make_app = AppTests.make_app
+
+    def test_pc_mode_starts_the_sensa_bridge(self):
+        _, bridge, _, _ = self.make_app(mode="pc")
+        self.assertEqual(bridge.started, 1)
+        self.assertTrue(bridge.command[-1].endswith("pc_bridge.py"))
+
+    def test_switching_controller_mode_restarts_the_matching_bridge(self):
+        app, bridge, system, _ = self.make_app(mode="bridge")
+        self.assertTrue(bridge.command[-1].endswith("gip_bridge.py"))
+        system.service, system.instance = "usbccgp", "USB\\VID_1532&PID_0A4C\\TEST"
+        app._probe()
+        self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
+        self.assertTrue(bridge.command[-1].endswith("pc_bridge.py"))
+
+    def test_trigger_settings_are_unavailable_in_pc_mode(self):
+        app, bridge, _, _ = self.make_app(mode="pc")
+        bridge.status.emit({"type": "status", "state": "connected", "backend": "sensa"})
+        page = app.window.vibration_page
+        self.assertFalse(page.trigger_enabled.isEnabled())
+        self.assertFalse(page.trigger_test.button.isEnabled())
+        self.assertTrue(page.grip_test.button.isEnabled())
+        self.assertIn("PC 模式", page.trigger_test.contentLabel.text())
+
+    def test_driver_switch_is_not_offered_in_pc_mode(self):
+        app, _, _, _ = self.make_app(mode="pc")
+        self.assertTrue(app.window.device_page.driver_button.isHidden())
+        self.assertIn("Sensa", app.window.device_page.driver.contentLabel.text())
+
+    def test_hiding_the_physical_pad_runs_elevated_and_is_saved(self):
+        app, _, system, path = self.make_app(mode="pc")
+        app.window.device_page.hide_physical.switch.setChecked(True)
+        self.assertTrue(wait_for(lambda: settings.load(path).hide_physical, timeout=5))
+        self.assertIn("--dev-hide", system.elevated[-1])
+
+    def test_declined_uac_reverts_the_hide_switch(self):
+        app, _, system, path = self.make_app(mode="pc")
+        system.elevated_code = None
+        switch = app.window.device_page.hide_physical.switch
+        switch.setChecked(True)
+        self.assertTrue(wait_for(lambda: not switch.isChecked(), timeout=5))
+        app.flush_save()
+        self.assertFalse(settings.load(path).hide_physical)
 
 
 class BridgeProcessTests(unittest.TestCase):

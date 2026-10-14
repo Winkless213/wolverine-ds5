@@ -10,7 +10,8 @@ from qfluentwidgets import (BodyLabel, CaptionLabel, FluentIcon, FluentWindow, I
 from app import __version__
 
 STATE_COLORS = {"connected": "#16A34A", "waiting": "#D97706", "error": "#DC2626", "stopped": "#6B7280"}
-MODE_TEXT = {"bridge": "桥接模式（WinUSB）", "xbox": "Xbox 模式", "absent": "未检测到手柄", None: "正在检测"}
+MODE_TEXT = {"bridge": "桥接模式（WinUSB）", "xbox": "Xbox 模式", "pc": "PC 模式（Sensa 握把）",
+             "absent": "未检测到手柄", None: "正在检测"}
 
 
 def draw_status_icon(state, size):
@@ -318,6 +319,7 @@ class VibrationPage(Page):
         self.trigger_test = TestCard("测试扳机", "按 LT / RT 分别震左 / 右扳机，按得越深越强",
                                      "测试中：按 LT 震左扳机、RT 震右扳机；游戏震动与握把马达已暂停", trigger)
         trigger.addSettingCard(self.trigger_test)
+        self.pc_mode = False
         for group in (grip, trigger):
             self.column.addWidget(group)
         self.column.addStretch(1)
@@ -341,13 +343,23 @@ class VibrationPage(Page):
     def _sync(self):
         grip, trigger = self.grip_enabled.switch.isChecked(), self.trigger_enabled.switch.isChecked()
         self.grip_gain.setEnabled(grip)
+        self.trigger_enabled.setEnabled(not self.pc_mode)
+        trigger = trigger and not self.pc_mode
         for card in (self.trigger_gain, self.trigger_resistance, self.trigger_follow):
             card.setEnabled(trigger)
         self.follow_ratio.setEnabled(trigger and self.trigger_follow.switch.isChecked())
 
+    def set_pc_mode(self, pc_mode):
+        # PC 模式的 XInput 只接受左右两路强度，扳机马达物理上收不到指令；设置保留，回到 Xbox 模式时照常生效。
+        self.pc_mode = pc_mode
+        self.trigger_test.idle = ("PC 模式下扳机马达不可用，切到 Xbox 模式才能使用" if pc_mode
+                                  else "按 LT / RT 分别震左 / 右扳机，按得越深越强")
+        self.trigger_test.set_active(self.testing == "trigger")
+        self._sync()
+
     def set_testable(self, enabled):
-        for card in (self.grip_test, self.trigger_test):
-            card.button.setEnabled(enabled)
+        self.grip_test.button.setEnabled(enabled)
+        self.trigger_test.button.setEnabled(enabled and not self.pc_mode)
 
     def set_test(self, target):
         self.testing = target
@@ -358,6 +370,7 @@ class VibrationPage(Page):
 class DevicePage(Page):
     changed = Signal(dict)
     autostart_changed = Signal(bool)
+    hide_changed = Signal(bool)
     driver_action = Signal(str)
     open_logs = Signal()
 
@@ -378,28 +391,35 @@ class DevicePage(Page):
         self.audio_guard = SwitchCard(FluentIcon.SPEAKERS, "默认音频自动切回",
                                       "虚拟 DualSense 抢成默认音频设备时切回原设备，避免游戏声音让握把一直震",
                                       settings.audio_guard, system)
+        self.hide_physical = SwitchCard(FluentIcon.HIDE, "对游戏隐藏实体手柄",
+                                        "PC 模式下游戏只看到虚拟 DualSense，避免按键提示来回切换；需要 HidHide 和管理员权限",
+                                        settings.hide_physical, system)
         self.logs = SettingCard(FluentIcon.FOLDER, "日志", str(log_dir), system)
         logs_button = PushButton("打开目录", self.logs)
         logs_button.clicked.connect(self.open_logs)
         self.logs.hBoxLayout.addWidget(logs_button, 0, Qt.AlignmentFlag.AlignRight)
         self.logs.hBoxLayout.addSpacing(16)
-        for card in (self.autostart, self.audio_guard, self.logs):
+        for card in (self.autostart, self.audio_guard, self.hide_physical, self.logs):
             system.addSettingCard(card)
 
         about = SettingCardGroup("关于", self.view)
         about.addSettingCard(SettingCard(FluentIcon.INFO, f"Wolverine DS5 {__version__}",
-                                         "把 Razer Wolverine V3 Pro 呈现为带四马达震动的 DualSense", about))
+                                         "把 Razer Wolverine V3 Pro 呈现为 DualSense：PC 模式左右对称震动，Xbox 模式四马达",
+                                         about))
         for group in (driver, system, about):
             self.column.addWidget(group)
         self.column.addStretch(1)
 
         self.autostart.switch.checkedChanged.connect(self.autostart_changed)
         self.audio_guard.switch.checkedChanged.connect(lambda checked: self.changed.emit({"audio_guard": checked}))
+        self.hide_physical.switch.checkedChanged.connect(self.hide_changed)
 
     def show_mode(self, mode, busy):
         self.mode = mode
         if busy:
             self.driver.setContent("正在切换驱动，请在弹出的窗口中允许管理员权限")
+        elif mode == "pc":
+            self.driver.setContent("当前：PC 模式，震动经雷蛇 Sensa 输出到左右握把（需 Synapse 运行）；扳机马达仅 Xbox 模式可用")
         elif mode == "bridge":
             self.driver.setContent("当前：桥接模式（WinUSB），游戏里是虚拟 DualSense")
         elif mode == "xbox":
@@ -408,6 +428,7 @@ class DevicePage(Page):
             self.driver.setContent("未检测到手柄，请用数据线连接")
         self.driver_button.setText("还原 Xbox 模式" if mode == "bridge" else "切换到桥接模式")
         self.driver_button.setEnabled(not busy and mode in ("bridge", "xbox"))
+        self.driver_button.setHidden(mode == "pc")
 
 
 class Window(FluentWindow):

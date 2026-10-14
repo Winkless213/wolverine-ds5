@@ -20,6 +20,8 @@ class Settings:
     trigger_follow: bool = False
     follow_ratio: float = 0.5
     audio_guard: bool = True
+    # PC 模式下用 HidHide 对游戏隐藏实体手柄，只放行桥接；界面开关切换时经 UAC 写入 HidHide。
+    hide_physical: bool = False
 
     @classmethod
     def from_dict(cls, data):

@@ -12,9 +12,11 @@ class Bridge(QObject):
     running = Signal(bool)
     log = Signal(str)
 
-    def __init__(self, command, cwd, log_dir, parent=None):
+    def __init__(self, command, cwd, log_dir, parent=None, make_command=None):
         super().__init__(parent)
         self.command, self.log_dir, self.log_day = command, log_dir, None
+        # PC 模式与 Xbox 模式各有一个桥接脚本；None 表示还没按手柄模式选过。
+        self.make_command, self.pc = make_command, None
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(cwd))
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -31,6 +33,12 @@ class Bridge(QObject):
     @property
     def is_running(self):
         return self.process.state() != QProcess.ProcessState.NotRunning
+
+    def set_pc(self, pc):
+        # 只影响下一次启动；正在运行的桥接由调用方先停掉。
+        self.pc = pc
+        if self.make_command:
+            self.command = self.make_command(pc)
 
     def start(self):
         if self.is_running:

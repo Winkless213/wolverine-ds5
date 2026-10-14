@@ -7,7 +7,7 @@ from unittest.mock import Mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.core import (AUTOSTART_NAME, BridgeEvents, autostart_command, bridge_command, describe, driver_mode,
-                      format_duration, parse_line, prune_logs, restore_xbox_script, usbip_attached)
+                      format_duration, hidhide_script, parse_line, prune_logs, restore_xbox_script, usbip_attached)
 
 
 class DisplayTests(unittest.TestCase):
@@ -21,6 +21,10 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(driver_mode("WinUSB"), "bridge")
         self.assertEqual(driver_mode("dc1-controller"), "xbox")
         self.assertEqual(driver_mode(None), "absent")
+
+    def test_pc_mode_is_recognised_by_its_product_id(self):
+        self.assertEqual(driver_mode("usbccgp", "USB\\VID_1532&PID_0A4C\\7&31912F88&0&4"), "pc")
+        self.assertEqual(driver_mode("WinUSB", "USB\\VID_1532&PID_0A3F\\0000A1B2C3D4E5F6"), "bridge")
 
     def test_duration_is_compact(self):
         self.assertEqual(format_duration(65), "01:05")
@@ -52,6 +56,16 @@ class DescribeTests(unittest.TestCase):
 
     def test_before_the_first_device_probe_it_is_still_detecting(self):
         self.assertEqual(describe(False, False, {}, None)[:2], ("waiting", "正在检测手柄"))
+
+    def test_pc_mode_connection_names_sensa_and_missing_triggers(self):
+        key, title, detail = describe(True, True, {"state": "connected", "backend": "sensa"}, "pc")
+        self.assertEqual((key, title), ("connected", "已连接"))
+        self.assertIn("Sensa", detail)
+
+    def test_pc_mode_without_synapse_asks_for_it(self):
+        key, title, detail = describe(True, True, {"state": "waiting", "reason": "sensa"}, "pc")
+        self.assertEqual(key, "waiting")
+        self.assertIn("Synapse", detail)
 
 
 class ParseLineTests(unittest.TestCase):
@@ -95,6 +109,26 @@ class CommandTests(unittest.TestCase):
     def test_bridge_uses_console_python_even_when_the_app_runs_windowless(self):
         command = bridge_command(frozen=False, executable="C:/Python314/pythonw.exe", root=pathlib.Path("C:/app"))
         self.assertEqual(command[0], "C:/Python314/python.exe")
+
+    def test_pc_mode_runs_the_sensa_bridge(self):
+        command = bridge_command(frozen=False, executable="python.exe", root=pathlib.Path("C:/app"), pc=True)
+        self.assertEqual(command[-1], str(pathlib.Path("C:/app/pc_bridge.py")))
+        self.assertEqual(bridge_command(frozen=True, executable="C:/W.exe", pc=True), ["C:/W.exe", "--bridge", "--pc"])
+
+    def test_hiding_whitelists_the_bridge_and_hides_only_the_pc_mode_gamepad(self):
+        script = hidhide_script("C:/Python314/python.exe", hide=True)
+        self.assertIn("--app-reg", script)
+        self.assertIn("C:/Python314/python.exe", script)
+        self.assertIn("USB\\VID_1532&PID_0A4C&MI_00\\*", script)
+        self.assertIn("HID\\VID_1532&PID_0A4C&IG_*", script)
+        self.assertIn("--dev-hide", script)
+        self.assertIn("--cloak-on", script)
+
+    def test_unhiding_restores_the_gamepad_without_touching_other_hidhide_users(self):
+        script = hidhide_script("C:/Python314/python.exe", hide=False)
+        self.assertIn("--dev-unhide", script)
+        self.assertNotIn("--cloak", script)
+        self.assertNotIn("--app-unreg", script)
 
     def test_autostart_launches_minimised_to_tray(self):
         self.assertTrue(autostart_command(["C:/WolverineDS5.exe"]).endswith('"C:/WolverineDS5.exe" --tray'))

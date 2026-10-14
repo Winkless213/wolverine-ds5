@@ -9,7 +9,11 @@ import sys
 
 AUTOSTART_NAME = "WolverineDS5"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-DEVICE_PREFIX = r"USB\VID_1532&PID_0A3F"
+DEVICE_PREFIXES = (r"USB\VID_1532&PID_0A3F", r"USB\VID_1532&PID_0A4C")
+PC_PRODUCT = "PID_0A4C"
+HIDHIDE_CLI = r"C:\Program Files\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe"
+# PC 模式下游戏能直接看到的两个接口：XInput（xusb22）与 HID 游戏手柄；其余雷蛇接口（Sensa 私有协议等）不动。
+PC_GAMEPAD_PATTERNS = (r"USB\VID_1532&PID_0A4C&MI_00\*", r"HID\VID_1532&PID_0A4C&IG_*")
 WINUSB_CLASS = "{88BAE032-5A81-49f0-BC3D-A4FF138216D6}"
 XBOX_CLASS = "{05f5cfe2-4733-4950-a6bb-07aad01a3a84}"
 
@@ -27,14 +31,14 @@ def data_dir():
     return path
 
 
-def bridge_command(frozen=None, executable=None, root=None):
+def bridge_command(frozen=None, executable=None, root=None, pc=False):
     frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     executable = executable or sys.executable
     if frozen:
-        return [executable, "--bridge"]
+        return [executable, "--bridge"] + (["--pc"] if pc else [])
     # pythonw 没有标准输出句柄，桥接子进程必须用控制台版 python（由 QProcess 隐藏窗口）。
     console = re.sub(r"pythonw\.exe$", "python.exe", executable, flags=re.IGNORECASE)
-    return [console, "-u", str((root or root_dir()) / "gip_bridge.py")]
+    return [console, "-u", str((root or root_dir()) / ("pc_bridge.py" if pc else "gip_bridge.py"))]
 
 
 def parse_line(line):
@@ -117,9 +121,11 @@ def usbip_ports():
         return ""
 
 
-def driver_mode(service):
+def driver_mode(service, instance=None):
     if not service:
         return "absent"
+    if instance and PC_PRODUCT in instance.upper():
+        return "pc"
     return "bridge" if service.lower() == "winusb" else "xbox"
 
 
@@ -139,8 +145,12 @@ def describe(running, wanted, status, mode):
     if not running:
         return "error", "桥接异常退出", "正在自动重启，详情见日志"
     state = status.get("state")
+    if state == "connected" and status.get("backend") == "sensa":
+        return "connected", "已连接", "PC 模式：震动经雷蛇 Sensa 输出到左右握把，扳机马达不可用"
     if state == "connected":
         return "connected", "已连接", f"握手 {status.get('handshake_s', 0)} 秒"
+    if status.get("reason") == "sensa":
+        return "waiting", "等待 Sensa", "请确认雷蛇 Synapse 正在运行，且已识别到手柄"
     if state == "handshake":
         return "waiting", "正在握手", "通常 2 秒内完成"
     if "handshake timeout" in status.get("error", ""):
@@ -148,7 +158,7 @@ def describe(running, wanted, status, mode):
     if state == "lost":
         return "waiting", "手柄已断开", "重新插上即可恢复，游戏无需重启"
     if mode == "absent":
-        return "waiting", "等待手柄", "请用数据线连接手柄，并切到 Xbox 模式"
+        return "waiting", "等待手柄", "请用数据线连接手柄（PC 模式或 Xbox 模式均可）"
     if mode == "xbox":
         return "waiting", "等待手柄", "手柄仍是 Xbox 驱动，请在“设备”页切换到桥接模式"
     return "waiting", "等待手柄", "正在连接"
@@ -171,7 +181,7 @@ def find_controller():
     if cfg.CM_Get_Device_ID_ListW("USB", buffer, size, flags):
         return None, None
     for instance in buffer[:size.value].split("\0"):
-        if instance.upper().startswith(DEVICE_PREFIX.upper() + "\\"):
+        if instance.upper().startswith(tuple(prefix.upper() + "\\" for prefix in DEVICE_PREFIXES)):
             devinst = wintypes.DWORD()
             service = ctypes.create_unicode_buffer(256)
             length = wintypes.ULONG(ctypes.sizeof(service))
@@ -186,6 +196,22 @@ def restore_xbox_script(instance_id):
     return (f'pnputil /remove-device "{instance_id}"\n'
             "Start-Sleep -Seconds 1\n"
             "pnputil /scan-devices\n")
+
+
+def hidhide_script(bridge_exe, hide):
+    """隐藏后只有放行的桥接程序能读到实体手柄，游戏里只剩虚拟 DualSense；恢复时只撤销对手柄的隐藏。
+
+    包括已拔出的历史实例，换 USB 口后仍然生效。全局隐藏开关和其他程序（DSX 等）的放行名单在恢复时保持不动。
+    """
+    patterns = " -or ".join(f"$_.InstanceId -like '{pattern}'" for pattern in PC_GAMEPAD_PATTERNS)
+    flag = "--dev-hide" if hide else "--dev-unhide"
+    register = "'--app-reg', '{}'".format(bridge_exe.replace("'", "''")) if hide else ""
+    return (f"$ids = @(Get-PnpDevice | Where-Object {{ {patterns} }} | ForEach-Object InstanceId)\n"
+            "if (-not $ids) { throw 'PC-mode controller interfaces not found' }\n"
+            f"$arguments = @({register}) + @($ids | ForEach-Object {{ '{flag}', $_ }})"
+            + (" + @('--cloak-on')\n" if hide else "\n")
+            + f"& '{HIDHIDE_CLI}' @arguments\n"
+            "exit $LASTEXITCODE\n")
 
 
 def winusb_script(instance_id):

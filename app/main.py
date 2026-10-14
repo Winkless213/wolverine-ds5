@@ -48,6 +48,7 @@ class System:
 class App(QObject):
     usbip_checked = Signal(bool)
     driver_done = Signal(object, str, str)
+    hide_done = Signal(object, bool)
 
     def __init__(self, bridge, system, settings_path, log_dir):
         super().__init__()
@@ -76,12 +77,14 @@ class App(QObject):
         bridge.running.connect(self._on_running)
         self.usbip_checked.connect(self._on_usbip)
         self.driver_done.connect(self._driver_done)
+        self.hide_done.connect(self._hide_done)
         pages = self.window
         pages.status_page.toggle_requested.connect(self._toggle)
         pages.vibration_page.changed.connect(self.update_settings)
         pages.vibration_page.test_requested.connect(self._test)
         pages.device_page.changed.connect(self.update_settings)
         pages.device_page.autostart_changed.connect(self._set_autostart)
+        pages.device_page.hide_changed.connect(self._set_hidden)
         pages.device_page.driver_action.connect(self.switch_driver)
         pages.device_page.open_logs.connect(lambda: system.open_folder(str(log_dir)))
         pages.shown.connect(self._check_usbip)
@@ -101,7 +104,7 @@ class App(QObject):
 
     def _probe(self):
         instance, service = self.system.find_controller()
-        mode = core.driver_mode(service)
+        mode = core.driver_mode(service, instance)
         self.instance = instance or self.instance
         if mode != self.mode:
             self.mode = mode
@@ -112,6 +115,12 @@ class App(QObject):
     def _apply_mode(self):
         # 拔线（变为 absent）时桥接继续跑，虚拟 DS5 不掉，游戏无需重启；Xbox 驱动下桥接用不了，停掉。
         self.wanted = self.mode != "xbox" and not self.paused
+        if self.wanted and self.mode in ("pc", "bridge") and self.bridge.pc != (self.mode == "pc"):
+            # 手柄换了模式：先停当前桥接，退出后由重启计时器按新模式拉起（虚拟 DS5 会短暂断开）。
+            self.bridge.set_pc(self.mode == "pc")
+            if self.bridge.is_running:
+                self.bridge.stop()
+                return
         if self.wanted:
             self._start_bridge()
         elif self.bridge.is_running:
@@ -175,6 +184,7 @@ class App(QObject):
         page.show_state(key, title, detail, action, not self.busy and self.mode is not None)
         page.mode_card.setContent(MODE_TEXT[self.mode])
         self.window.device_page.show_mode(self.mode, self.busy)
+        self.window.vibration_page.set_pc_mode(self.mode == "pc")
         self.window.vibration_page.set_testable(connected)
         if not connected and self.window.vibration_page.testing:
             self._test(None)
@@ -237,6 +247,31 @@ class App(QObject):
         self.bridge.send(json.dumps({"type": "test", "target": target}))
         self.window.vibration_page.set_test(target)
 
+    # ---- 对游戏隐藏实体手柄（HidHide） ----
+
+    def _set_hidden(self, hidden):
+        script = core.hidhide_script(core.bridge_command(pc=True)[0], hidden)
+
+        def work():
+            self.hide_done.emit(self.system.run_elevated(script), hidden)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _hide_done(self, code, hidden):
+        if code == 0:
+            self.update_settings({"hide_physical": hidden})
+            self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄",
+                       "游戏里只会看到虚拟 DualSense" if hidden else "游戏可以再次直接读取实体手柄")
+            return
+        switch = self.window.device_page.hide_physical.switch
+        switch.blockSignals(True)
+        switch.setChecked(self.settings.hide_physical)
+        switch.blockSignals(False)
+        if code is None:
+            self.toast("warning", "未更改", "没有获得管理员权限")
+        else:
+            self.toast("error", "HidHide 设置失败", f"退出码 {code}；请确认已安装 HidHide，且手柄曾以 PC 模式连接过")
+
     # ---- 驱动切换 ----
 
     def switch_driver(self, target):
@@ -270,7 +305,7 @@ class App(QObject):
             code = self.system.run_elevated(script)
             mode = "absent"
             for _ in range(30):
-                mode = core.driver_mode(self.system.find_controller()[1])
+                mode = core.driver_mode(*reversed(self.system.find_controller()))
                 if mode == target or code is None:
                     break
                 time.sleep(.5)
@@ -376,7 +411,9 @@ def main(argv=None):
         socket.waitForBytesWritten(1000)
         return 0
 
-    app = App(Bridge(core.bridge_command(), core.root_dir(), log_dir), System(), settings.default_path(), log_dir)
+    app = App(Bridge(core.bridge_command(), core.root_dir(), log_dir,
+                     make_command=lambda pc: core.bridge_command(pc=pc)),
+              System(), settings.default_path(), log_dir)
     server = QLocalServer(app)
 
     def activate():
