@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from pcm_to_sensa import PcmToSensa
+from pcm_to_sensa import EnvelopeToSensa, PcmToSensa
 
 
 def pcm_tones(left=(), right=(), frames=4800):
@@ -86,6 +86,57 @@ class PcmTests(unittest.TestCase):
                 else:
                     self.assertTrue(all(abs(side["frequency_hz"] - frequency) <= 1 for side in steady))
                     self.assertTrue(all(abs(side["amplitude"] - .132) < .005 for side in steady))
+
+
+def envelope(pcm, chunk_frames=48):
+    converter = EnvelopeToSensa()
+    results = []
+    for offset in range(0, len(pcm), chunk_frames * 4):
+        results.extend(converter.push(pcm[offset:offset + chunk_frames * 4]))
+    return results
+
+
+class EnvelopeTests(unittest.TestCase):
+    def test_sub_30hz_game_haptics_still_vibrate_at_the_lowest_sensa_frequency(self):
+        # 10ms 包络短于 15Hz 周期，强度随相位起伏；要求的是“不被丢掉”，与已认可的实机映射一致。
+        frames = [frame["channels"] for frame in envelope(pcm_tones(((.3, 15),))) if not frame["warmup"]]
+        self.assertGreater(min(left["amplitude"] for left, _ in frames), .05)
+        self.assertGreater(max(left["amplitude"] for left, _ in frames), .3)
+        self.assertTrue(all(left["frequency_hz"] == 30 and right["amplitude"] == 0 for left, right in frames))
+
+    def test_in_band_tones_keep_their_frequency_per_side(self):
+        final = envelope(pcm_tones(((.3, 160),), ((.2, 80),)))[-1]["channels"]
+        for channel, frequency, amplitude in zip(final, (160, 80), (.36, .24)):
+            self.assertAlmostEqual(channel["frequency_hz"], frequency, delta=6)
+            self.assertAlmostEqual(channel["amplitude"], amplitude, delta=.02)
+        self.assertEqual([channel["bodypart"] for channel in final], [216, 116])
+
+    def test_full_scale_is_capped(self):
+        self.assertEqual(envelope(pcm_tones(((1, 60),)))[-1]["channels"][0]["amplitude"], .6)
+
+    def test_silence_and_noise_floor_stop_output(self):
+        converter = EnvelopeToSensa()
+        converter.push(pcm_tones(((.5, 100),)))
+        quiet = converter.push(pcm_tones(((.005, 100),), frames=960))[-1]["channels"]
+        self.assertEqual([side["amplitude"] for side in quiet], [0, 0])
+
+    def test_chunk_boundaries_do_not_change_parameters_or_sample_clock(self):
+        pcm = pcm_tones(((.7, 18),), ((.4, 250),), frames=4992)
+        self.assertEqual(envelope(pcm, 48), envelope(pcm, 37))
+        self.assertEqual([item["end_frame"] for item in envelope(pcm)], list(range(192, 4993, 192)))
+
+    def test_reset_discards_history(self):
+        converter = EnvelopeToSensa()
+        converter.push(pcm_tones(((.8, 100),), frames=1000))
+        converter.reset()
+        quiet = converter.push(b"\0" * 192 * 4)[-1]
+        self.assertEqual(quiet["end_frame"], 192)
+        self.assertEqual([side["amplitude"] for side in quiet["channels"]], [0, 0])
+
+    def test_invalid_pcm_is_rejected(self):
+        for pcm in (b"", b"\0", b"\0" * 6):
+            with self.assertRaises(ValueError):
+                EnvelopeToSensa().push(pcm)
 
 
 if __name__ == "__main__":

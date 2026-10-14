@@ -101,3 +101,40 @@ class PcmToSensa:
             result.append({"end_frame": self.frames, "warmup": len(self.history) < WINDOW_FRAMES,
                            "channels": channels})
         return result
+
+
+ENVELOPE_FRAMES = 480
+ENVELOPE_GAIN = 1.2
+ENVELOPE_LIMIT = .6
+ENVELOPE_BAND = (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) >= 5) & (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) <= 400)
+ENVELOPE_FREQUENCIES = np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE)[ENVELOPE_BAND]
+
+
+def envelope_tone(samples, bodypart):
+    """10ms 峰值包络 ×1.2 作强度；主频含 30Hz 以下（DS5 触觉常在 12–23Hz），夹到 Sensa 的 30–400Hz。"""
+    recent = samples[-ENVELOPE_FRAMES:]
+    amplitude = min(ENVELOPE_LIMIT, ENVELOPE_GAIN * float(np.sqrt(np.mean(recent ** 2))) * np.sqrt(2))
+    if amplitude <= .01:
+        return {"bodypart": bodypart, "amplitude": 0.0, "frequency_hz": 80.0}
+    spectrum = np.abs(np.fft.rfft((samples - samples.mean()) * np.hanning(len(samples)), n=FFT_SIZE))
+    peak = float(ENVELOPE_FREQUENCIES[np.argmax(spectrum[ENVELOPE_BAND])])
+    return {"bodypart": bodypart, "amplitude": amplitude, "frequency_hz": float(np.clip(peak, 30, 400))}
+
+
+class EnvelopeToSensa(PcmToSensa):
+    """PC 模式 Sensa 用的映射（实机对比后选定）：不丢 30Hz 以下的能量，强度跟随包络。"""
+
+    def push(self, pcm):
+        if not pcm or len(pcm) % 4:
+            raise ValueError("Expected complete, nonempty stereo S16LE frames")
+        samples = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2).astype(np.float64) / 32768
+        self.pending = np.concatenate((self.pending, samples))
+        result = []
+        while len(self.pending) >= HOP_FRAMES:
+            self.history = np.concatenate((self.history, self.pending[:HOP_FRAMES]))[-WINDOW_FRAMES:]
+            self.pending = self.pending[HOP_FRAMES:]
+            self.frames += HOP_FRAMES
+            result.append({"end_frame": self.frames, "warmup": len(self.history) < WINDOW_FRAMES,
+                           "channels": [envelope_tone(self.history[:, side], part)
+                                        for side, part in enumerate((216, 116))]})
+        return result
