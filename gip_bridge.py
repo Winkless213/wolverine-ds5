@@ -155,15 +155,15 @@ def attach_virtual_ds5(address, busid, run=subprocess.run):
 
 
 class Status:
-    """给托盘程序的状态行：waiting / handshake / connected / lost，只在变化时输出。"""
+    """给托盘程序的状态行：waiting / handshake / connected / lost，状态或附带原因变化时才输出。"""
 
     def __init__(self, write=None):
         self.write = write or (lambda line: print(line, flush=True))
         self.state = None
 
     def set(self, state, **details):
-        if state != self.state:
-            self.state = state
+        if (state, details) != self.state:
+            self.state = (state, details)
             self.write(json.dumps({"type": "status", "state": state, **details}))
 
 
@@ -217,7 +217,7 @@ def reconnect_loop(opener, session, wait, alive):
     return 1
 
 
-def main():
+def main(serve_capture=None):
     print("Starting GIP to DualSense bridge...", flush=True)
     capture_proc = subprocess.Popen(
         [os.environ.get("GIP_BRIDGE_CAPTURE_EXE", "./wolverine-capture.exe"), "-port", "3240", "-duration", "24h"],
@@ -228,7 +228,7 @@ def main():
         bufsize=1
     )
     try:
-        return serve(capture_proc)
+        return (serve_capture or serve)(capture_proc)
     except KeyboardInterrupt:
         print("\nStopping bridge...", flush=True)
         try:
@@ -244,7 +244,8 @@ def main():
             capture_proc.wait(timeout=2)
 
 
-def serve(capture_proc):
+def serve(capture_proc, make_haptics=lambda saved: Haptics(NullOutput(), saved), opener=UsbTransport,
+          run_session=None):
     ready_line = capture_proc.stdout.readline()
     if not ready_line:
         print("ERROR: wolverine-capture failed to start", file=sys.stderr, flush=True)
@@ -259,7 +260,7 @@ def serve(capture_proc):
     threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
     attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
 
-    haptics = Haptics(NullOutput(), settings.load())
+    haptics = make_haptics(settings.load())
     audio_guard.start(enabled=lambda: haptics.settings.audio_guard)
     counts = collections.Counter()
     STATUS.set("waiting")
@@ -271,7 +272,8 @@ def serve(capture_proc):
             drain(events, haptics, counts)
             time.sleep(.01)
 
-    return reconnect_loop(UsbTransport, lambda transport: session(transport, capture_proc, events, haptics, counts),
+    run_session = run_session or session
+    return reconnect_loop(opener, lambda transport: run_session(transport, capture_proc, events, haptics, counts),
                           wait, alive=lambda: capture_proc.poll() is None)
 
 
@@ -367,11 +369,11 @@ def supervise(run=main, wait=time.sleep):
             return 0
 
 
-def run():
+def run(entry=main):
     """进程入口：stdin 只开一个读线程，供 supervise 的每一轮会话共用。"""
     threading.Thread(target=read_commands, args=(sys.stdin, COMMANDS),
                      kwargs={"quit_on_eof": bool(os.environ.get("WOLVERINE_MANAGED"))}, daemon=True).start()
-    return supervise()
+    return supervise(run=entry)
 
 
 if __name__ == "__main__":
