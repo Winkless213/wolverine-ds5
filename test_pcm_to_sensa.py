@@ -106,14 +106,17 @@ class EnvelopeTests(unittest.TestCase):
 
     def test_in_band_tones_keep_their_frequency_per_side(self):
         final = envelope(pcm_tones(((.3, 160),), ((.2, 80),)))[-1]["channels"]
-        for channel, frequency, amplitude in zip(final, (160, 80), (.6, .49)):
+        for channel, frequency, amplitude in zip(final, (160, 80), (.47, .34)):
             self.assertAlmostEqual(channel["frequency_hz"], frequency, delta=6)
             self.assertAlmostEqual(channel["amplitude"], amplitude, delta=.02)
         self.assertEqual([channel["bodypart"] for channel in final], [216, 116])
 
-    def test_weak_game_haptics_are_still_clearly_felt(self):
-        # 实测《死亡搁浅 2》游戏中多数触觉只有满幅 2% 左右。
-        self.assertGreater(envelope(pcm_tones(((.02, 20),)))[-1]["channels"][0]["amplitude"], .1)
+    def test_weak_game_haptics_are_lifted_but_keep_contrast(self):
+        # 实测《死亡搁浅 2》多数触觉只有满幅 2% 左右，p90 约 25%；开平方后实机反馈整体偏强。
+        weak = envelope(pcm_tones(((.02, 20),)))[-1]["channels"][0]["amplitude"]
+        strong = envelope(pcm_tones(((.25, 20),)))[-1]["channels"][0]["amplitude"]
+        self.assertAlmostEqual(weak, .06, delta=.015)
+        self.assertAlmostEqual(strong, .4, delta=.05)
 
     def test_full_scale_is_capped(self):
         self.assertEqual(envelope(pcm_tones(((1, 60),)))[-1]["channels"][0]["amplitude"], 1)

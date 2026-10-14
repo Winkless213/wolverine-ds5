@@ -293,7 +293,7 @@ class VibrationPage(Page):
         super().__init__("vibration", "震动", parent)
         grip = SettingCardGroup("握把马达", self.view)
         self.grip_enabled = SwitchCard(FluentIcon.GAME, "握把震动", "左右握把的大马达", settings.grip_enabled, grip)
-        self.grip_gain = SliderCard(FluentIcon.SPEED_HIGH, "握把强度", "100% 为游戏原始强度",
+        self.grip_gain = SliderCard(FluentIcon.SPEED_HIGH, "握把强度", "100% 为默认强度",
                                     settings.grip_gain, 150, grip)
         for card in (self.grip_enabled, self.grip_gain):
             grip.addSettingCard(card)
