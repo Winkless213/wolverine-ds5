@@ -206,10 +206,10 @@ def find_controller():
 
 
 def restore_xbox_script(instance_id):
-    # 删除设备节点后重新扫描，Windows 按原排名重新选中 Xbox 驱动；不删除驱动包本身。
-    return (f'pnputil /remove-device "{instance_id}"\n'
-            "Start-Sleep -Seconds 1\n"
-            "pnputil /scan-devices\n")
+    # 按兼容 ID 排名把原厂 Xbox 驱动装回去，不动设备节点。删节点再重扫会把无线接收器弄成
+    # phantom，扫不回来，只能物理拔插（已实测发生过一次）。
+    tools = root_dir() / "tools"
+    return f"& '{tools / 'swap_winusb.ps1'}' -InstanceId '{instance_id}' -Restore\n"
 
 
 def hidhide_script(bridge_exe, hide):

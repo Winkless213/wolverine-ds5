@@ -136,10 +136,13 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(autostart_command(["C:/WolverineDS5.exe"]).endswith('"C:/WolverineDS5.exe" --tray'))
         self.assertEqual(AUTOSTART_NAME, "WolverineDS5")
 
-    def test_restore_script_removes_only_the_razer_device_and_rescans(self):
+    def test_restore_script_reinstalls_the_xbox_driver_without_touching_the_device_node(self):
         script = restore_xbox_script("USB\\VID_1532&PID_0A3F\\0000A1B2C3D4E5F6")
-        self.assertIn('pnputil /remove-device "USB\\VID_1532&PID_0A3F\\0000A1B2C3D4E5F6"', script)
-        self.assertIn("pnputil /scan-devices", script)
+        self.assertIn("-InstanceId 'USB\\VID_1532&PID_0A3F\\0000A1B2C3D4E5F6'", script)
+        self.assertIn("-Restore", script)
+        # 删除设备节点会把无线接收器弄成 phantom，扫描扫不回来，只能物理拔插。
+        self.assertNotIn("remove-device", script)
+        self.assertNotIn("scan-devices", script)
 
 
 class LogTests(unittest.TestCase):
