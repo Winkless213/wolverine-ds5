@@ -1,8 +1,9 @@
 import unittest
 
-from api_check import inspect_host
+from api_check import ROOT, inspect_host
 
 
+@unittest.skipUnless((ROOT / "wolverine-capture.exe").exists(), "needs a locally built wolverine-capture.exe")
 class HostApiTests(unittest.TestCase):
     def test_real_local_socket_carries_input_audio_triggers_and_shutdown(self):
         result = inspect_host()

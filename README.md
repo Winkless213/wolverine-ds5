@@ -1,3 +1,30 @@
+# Wolverine DS5
+
+把雷蛇 Wolverine V3 Pro 手柄呈现为虚拟 PS5 DualSense，让只支持 DualSense 触觉的 PC 游戏（实测《死亡搁浅 2》）把触觉震动送到这只手柄上。Windows 托盘程序，个人项目。
+
+## 工作原理
+
+1. Go 接收程序 `wolverine-capture`（基于 VIIPER 修改，GPL-3.0，源码见 [Winkless213/VIIPER 的 wolverine-capture 分支](https://github.com/Winkless213/VIIPER/tree/wolverine-capture)）在本机回环上通过 USB/IP 挂一只虚拟 DualSense。游戏把触觉作为四声道 USB 音频的后两路发给它。
+2. 接收程序把触觉 PCM 和主机输出报告以 JSON Lines 写到 stdout；Python 桥接从 stdin 把实体手柄的输入回送，250ms 没有输入即回中。
+3. Python 桥接把 PCM 转成手柄能播的参数：
+   - PC 模式（主路线）：10ms 峰值包络取 0.75 次方作强度，经雷蛇 Sensa 驱动左右握把。
+   - Xbox 模式（备选）：经 XUSB 驱动四个马达，含扳机。
+4. PySide6 托盘程序负责启停、强度调节、按手柄模式选择桥接、驱动切换和用 HidHide 对游戏隐藏实体手柄。
+
+## 运行
+
+- Windows 10/11，Python 3.11+，已安装 [USBip-win2](https://github.com/vadimgrn/usbip-win2) 和 [HidHide](https://github.com/nefarius/HidHide)。
+- 依赖：`numpy`、`PySide6-Essentials`、`PySide6-Fluent-Widgets`。
+- 仓库不含二进制：`wolverine-capture.exe` 需从上面的 VIIPER 分支自行编译（`go build -o wolverine-capture.exe ./cmd/wolverine-capture`），`SDL3.dll` 从 [SDL 官方 release](https://github.com/libsdl-org/SDL/releases) 下载，都放在仓库根目录。
+- PC 模式需要本机已安装的雷蛇 Synapse，程序从其安装目录加载 HAR 与 Provider，本仓库不包含也不分发雷蛇的任何文件。
+- 启动托盘：`pythonw app\main.py`；测试：`python -m pytest -q`（`test_api_check.py` 需要编译好的 `wolverine-capture.exe`）。
+
+雷蛇、Razer、Wolverine、DualSense 等名称归各自所有者。本项目与雷蛇、索尼没有关联。
+
+下面是开发过程的实测记录（中文，按时间保留）。
+
+---
+
 **Wolverine DS5 · 2026-10-14**
 
 把 Razer Wolverine V3 Pro 呈现为虚拟 DualSense。**主路线是 PC 模式**：游戏的 DS5 触觉经雷蛇 Sensa 输出到左右握把，两侧对称，没有扳机震动。**Xbox 模式是备选**：四个马达都可用，含扳机，但左右握把手感不对称。托盘程序按手柄当前模式自动选择桥接。
@@ -165,4 +192,4 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - HAR 包装依据官方 Unity ABI 与本机 DLL 的独立 Ghidra 分析；REA 的 EXE 分析结果见上一级调研报告。本次 DLL 逆向不能计作 REA 成果。
 - `sensa-device.json` 来自本机 Sage T1 历史服务元数据，仅用于离线构造，不能当成每次运行时的设备探测。
 
-完整研究和先前震感反馈见上一级 `Wolverine-DS5-调研与实测.md`。源码和二进制尚未提交或推送 Git。本轮修改位于工作目录；旧 `manifest.json` 与上一级原型 ZIP 是此前快照，尚未重新打包，不能用于校验本轮新增代码。
+旧 `manifest.json` 是早期原型打包时的快照，不能用于校验之后的代码。
