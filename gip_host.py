@@ -296,8 +296,33 @@ class GipHost:
             self.transport.close()
 
 
+TRANSFER_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
+
+
+def gip_endpoints(config):
+    """在 alt 0 中找 GIP 类（FF/47/D0）的一对 interrupt 端点，返回 (接口号, IN, OUT, 包长)。
+
+    有线手柄是 0x81/0x01，2.4G 接收器是 0x84/0x05，选法与参考实现 giptool.c find_endpoints 相同。
+    """
+    found = []
+    for alt in config:
+        kinds = [(ep.bEndpointAddress, TRANSFER_TYPES[ep.bmAttributes & 3]) for ep in alt]
+        found.append(f"if{alt.bInterfaceNumber} alt{alt.bAlternateSetting} "
+                     f"{alt.bInterfaceClass:02X}/{alt.bInterfaceSubClass:02X}/{alt.bInterfaceProtocol:02X} "
+                     f"[{', '.join(f'0x{address:02X} {kind}' for address, kind in kinds)}]")
+        if alt.bAlternateSetting or (alt.bInterfaceClass, alt.bInterfaceSubClass, alt.bInterfaceProtocol) != (
+                0xFF, 0x47, 0xD0):
+            continue
+        pipe = [ep for ep in alt if ep.bmAttributes & 3 == 3]
+        ins = [ep for ep in pipe if ep.bEndpointAddress & 0x80]
+        outs = [ep for ep in pipe if not ep.bEndpointAddress & 0x80]
+        if ins and outs:
+            return alt.bInterfaceNumber, ins[0].bEndpointAddress, outs[0].bEndpointAddress, ins[0].wMaxPacketSize
+    raise RuntimeError(f"No GIP interrupt pipe; found {'; '.join(found)}")
+
+
 class UsbTransport:
-    """WinUSB/libusb 端点 0x81/0x01；需先把 1532:0A3F 的驱动换为 WinUSB。"""
+    """WinUSB/libusb 上的 GIP 数据管道，端点按描述符发现；需先把 1532:0A3F 的驱动换为 WinUSB。"""
 
     def __init__(self, vid=0x1532, pid=0x0A3F):
         import libusb_package
@@ -307,7 +332,8 @@ class UsbTransport:
         self.device = libusb_package.find(idVendor=vid, idProduct=pid)
         if self.device is None:
             raise RuntimeError(f"USB device {vid:04X}:{pid:04X} not found via libusb (driver must be WinUSB)")
-        usb.util.claim_interface(self.device, 0)
+        self.interface, self.ep_in, self.ep_out, self.packet = gip_endpoints(self.device.get_active_configuration())
+        usb.util.claim_interface(self.device, self.interface)
         try:
             self.device.set_interface_altsetting(1, 0)
         except usb.core.USBError:
@@ -315,12 +341,12 @@ class UsbTransport:
 
     def read(self, timeout_ms):
         try:
-            return bytes(self.device.read(0x81, 64, max(1, timeout_ms)))
+            return bytes(self.device.read(self.ep_in, self.packet, max(1, timeout_ms)))
         except self.usb.core.USBTimeoutError:
             return None
 
     def write(self, data):
-        if self.device.write(0x01, data, 250) != len(data):
+        if self.device.write(self.ep_out, data, 250) != len(data):
             raise OSError("Short GIP write")
 
     def close(self):

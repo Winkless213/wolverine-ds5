@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 import gip_host
-from gip_host import Auth, GipHost, GipAuthError, ack, header, parse, prf
+from gip_host import Auth, GipHost, GipAuthError, ack, gip_endpoints, header, parse, prf
 
 
 class FakeController:
@@ -87,6 +87,49 @@ class Clock:
 
     def __call__(self):
         return self.now
+
+
+class Descriptor(list):
+    """pyusb 描述符替身：可迭代出子描述符，字段按属性读取。"""
+
+    def __init__(self, children=(), **fields):
+        super().__init__(children)
+        self.__dict__.update(fields)
+
+
+def interface(number, alt, *endpoints, cls=(0xFF, 0x47, 0xD0)):
+    return Descriptor([Descriptor(bEndpointAddress=address, bmAttributes=kind, wMaxPacketSize=size)
+                       for address, kind, size in endpoints],
+                      bInterfaceNumber=number, bAlternateSetting=alt,
+                      bInterfaceClass=cls[0], bInterfaceSubClass=cls[1], bInterfaceProtocol=cls[2])
+
+
+INTERRUPT, ISOCHRONOUS, BULK = 3, 1, 2
+# 有线：research/gip-v3pro/NOTES.md:11；2.4G 接收器：2026-10-15 01:31 P1 探针在 WinUSB 下的描述符树。
+WIRED = Descriptor([interface(0, 0, (0x81, INTERRUPT, 64), (0x01, INTERRUPT, 64)),
+                    interface(1, 0),
+                    interface(1, 1, (0x03, ISOCHRONOUS, 228), (0x83, ISOCHRONOUS, 64))])
+RECEIVER = Descriptor([interface(0, 0, (0x05, INTERRUPT, 64), (0x84, INTERRUPT, 64)),
+                       interface(1, 0),
+                       interface(1, 1, (0x06, ISOCHRONOUS, 228), (0x87, ISOCHRONOUS, 64))])
+
+
+class EndpointDiscoveryTests(unittest.TestCase):
+    def test_wired_controller_uses_its_interrupt_pipe(self):
+        self.assertEqual(gip_endpoints(WIRED), (0, 0x81, 0x01, 64))
+
+    def test_receiver_uses_its_own_endpoint_addresses(self):
+        self.assertEqual(gip_endpoints(RECEIVER), (0, 0x84, 0x05, 64))
+
+    def test_audio_alt_setting_is_never_picked(self):
+        audio_only = Descriptor([interface(1, 1, (0x06, ISOCHRONOUS, 228), (0x87, ISOCHRONOUS, 64))])
+        with self.assertRaises(RuntimeError):
+            gip_endpoints(audio_only)
+
+    def test_missing_gip_pipe_reports_what_was_found(self):
+        vendor = Descriptor([interface(0, 0, (0x81, BULK, 64), (0x02, BULK, 64), cls=(0xFF, 0x5D, 0x01))])
+        with self.assertRaisesRegex(RuntimeError, r"if0 alt0 FF/5D/01 \[0x81 bulk, 0x02 bulk\]"):
+            gip_endpoints(vendor)
 
 
 class FramingTests(unittest.TestCase):
