@@ -6,7 +6,7 @@ datas = collect_data_files("qfluentwidgets") + [
     ("wolverine-capture.exe", "."),
     ("SDL3.dll", "."),
     ("tools/*.ps1", "tools"),
-    ("SDL-LICENSE.txt", "licenses"),
+    ("reference-licenses/SDL-zlib.txt", "licenses"),
     ("reference-licenses/*", "licenses"),
 ]
 common = dict(pathex=["."], datas=datas, excludes=["tkinter", "matplotlib", "PySide6.QtWebEngineCore"])

@@ -186,7 +186,7 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。
-- SDL 3.4.18，zlib 许可，见 `SDL-LICENSE.txt`。
+- SDL 3.4.18，zlib 许可，见 `reference-licenses/SDL-zlib.txt`。
 - 扳机协议参考 MIT 许可的 `WujekFoliarz/duaLib@03bad1bea2a36561b520846776f2a07ced6773e0`，见 `reference-licenses/`。
 - XUSB 9 字节报文参考 [X1nput](https://github.com/araghon007/X1nput/tree/96538509155e887260f6caa797971eb680e4eae1)（MIT）；短脉冲时序字段核对 [xpadneo](https://github.com/atar-axis/xpadneo/blob/3879ba0f44e9bcfd500a5b92d02f83885f6b23c7/hid-xpadneo/src/xpadneo/rumble.c)。PadForge 的 XUSB writer 仅用于方案对照，未运行或安装整套应用。
 - HAR 包装依据官方 Unity ABI 与本机 DLL 的独立 Ghidra 分析；REA 的 EXE 分析结果见上一级调研报告。本次 DLL 逆向不能计作 REA 成果。
