@@ -210,6 +210,15 @@ class ReconnectTests(unittest.TestCase):
         first.close.assert_called_once()
         second.close.assert_called_once()
 
+    def test_open_failure_is_reported_once_instead_of_retrying_silently(self):
+        lines = []
+        error = RuntimeError("No GIP interrupt pipe; found if0 alt0 FF/47/D0 []")
+        opener = Mock(side_effect=[error, error, Mock()])
+        with patch.object(gip_bridge, "STATUS", Status(lines.append)):
+            reconnect_loop(opener, Mock(return_value=1), wait=Mock(), alive=lambda: True)
+        self.assertEqual([json.loads(line) for line in lines],
+                         [{"type": "status", "state": "waiting", "error": str(error)}])
+
     def test_capture_exit_ends_reconnect_loop(self):
         opener = Mock(side_effect=RuntimeError("USB device not found"))
         alive = Mock(side_effect=[True, False])

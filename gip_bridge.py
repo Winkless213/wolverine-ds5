@@ -203,7 +203,9 @@ def reconnect_loop(opener, session, wait, alive):
     while alive():
         try:
             transport = opener()
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError) as error:
+            # 打不开就带原因留在 waiting；Status 去重，同一错误只输出一次。
+            STATUS.set("waiting", error=str(error))
             wait()
             continue
         try:
