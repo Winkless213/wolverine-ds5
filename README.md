@@ -2,6 +2,19 @@
 
 把雷蛇 Wolverine V3 Pro 手柄呈现为虚拟 PS5 DualSense，让只支持 DualSense 触觉的 PC 游戏（实测《死亡搁浅 2》）把触觉震动送到这只手柄上。Windows 托盘程序，个人项目。
 
+## 项目亮点
+
+- **USB 虚拟设备（Go）**：在开源 USB/IP 框架 VIIPER 上扩展触觉音频抓取（[wolverine-capture 分支](https://github.com/Winkless213/VIIPER/tree/wolverine-capture)）。环形缓冲加互斥锁，缓冲满时丢帧计数、不阻塞 USB 线程；桥接进程用 goroutine、channel、context 处理并发、信号和超时。
+- **信号处理（Python）**：触觉 PCM 取 10ms 峰值包络，依据游戏实测信号分布选定 0.75 次方映射曲线；对照实验中幅度响应从 28ms 降到 4ms。
+- **Windows 驱动处理**：`tools/swap_winusb.ps1` 通过 SetupAPI 切换和还原手柄驱动。查出提权进程拿到的是本地化（中文）驱动描述导致切换必然失败，改为与语言无关的匹配；还原时按兼容 ID 重装原驱动，无需重启。
+- **抓包与逆向分析**：Windows ETW 拿不到数据内容，改用 USBPcap 抓包分析手柄报告频率和时序；用 Ghidra（headless）和 ILSpy 静态分析厂商组件，还原触觉参数帧格式，作为实现参考。
+- **桌面程序**：PySide6 托盘程序，负责桥接启停、强度实时调节、驱动模式切换（UAC 提权）、用 HidHide 对游戏隐藏实体手柄、开机自启。
+- **测试**：pytest 210 项；每次实机验证都留有 JSON 证据（`validation/`）。
+
+技术栈：Go / Python / NumPy / PySide6 / USB/IP / USBPcap / Ghidra / Windows SetupAPI
+
+开发方式：本人负责方案、实机测试与验收，使用 AI 编程工具辅助编码。
+
 ## 工作原理
 
 1. Go 接收程序 `wolverine-capture`（基于 VIIPER 修改，GPL-3.0，源码见 [Winkless213/VIIPER 的 wolverine-capture 分支](https://github.com/Winkless213/VIIPER/tree/wolverine-capture)）在本机回环上通过 USB/IP 挂一只虚拟 DualSense。游戏把触觉作为四声道 USB 音频的后两路发给它。
