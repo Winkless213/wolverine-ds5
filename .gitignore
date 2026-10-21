@@ -10,3 +10,7 @@ bridge.cmd
 dev_bridge.py
 wolverine-capture.exe
 SDL3.dll
+
+# 本机交接与临时备份不入库
+HANDOFF.md
+*.bak

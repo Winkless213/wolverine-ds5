@@ -10,13 +10,17 @@ import json
 import os
 import pathlib
 import sys
+import threading
 import time
 
 import gip_bridge
 from capture_recorder import decode_audio_block
+from input_timing import InputCadence
 from pcm_to_sensa import ENVELOPE_LIMIT, EnvelopeToSensa
-from sdl_input import RazerInput
+from sdl_input import RazerInput, input_state
+from sensa_multiband import MixState, MultibandGrips, PcmMailbox
 from settings import Settings
+from trigger_trace import TriggerTrace
 
 SENSA_DIR = pathlib.Path(r"C:\Program Files (x86)\Interhaptics\HapticService")
 VERIFIED = {"HAR.dll": "ed774be3b3fac9d3dad0d75c8ad2e95d019fec1c4720b77957ce434e468c807e",
@@ -133,6 +137,111 @@ class NullGrips:
         pass
 
 
+class SensaOutputWorker:
+    """把可能阻塞的 Sensa 初始化和输出隔离出手柄输入循环。"""
+
+    def __init__(self, factory=SensaGrips, retry_seconds=1, pcm=None):
+        self.factory = factory
+        self.pcm = pcm
+        self.retry_seconds = retry_seconds
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.stopping = threading.Event()
+        self.desired = [QUIET, QUIET]
+        self._status = (False, None)
+        self._reported_status = self._status
+        self.thread = threading.Thread(target=self._run, name="WolverineSensaOutput", daemon=True)
+        self.thread.start()
+
+    @property
+    def ready(self):
+        with self.lock:
+            return self._status[0]
+
+    def take_status(self):
+        with self.lock:
+            if self._status == self._reported_status:
+                return None
+            self._reported_status = self._status
+            return self._status
+
+    def set(self, side, amplitude, frequency):
+        with self.lock:
+            self.desired[side] = (amplitude, frequency)
+
+    def render(self):
+        self.wake.set()
+
+    def silence(self):
+        if self.pcm is not None:
+            self.pcm.pause()
+        with self.lock:
+            self.desired = [QUIET, QUIET]
+        self.wake.set()
+
+    def close(self):
+        self.silence()
+        self.stopping.set()
+        self.wake.set()
+        self.thread.join(timeout=2)
+
+    def _set_status(self, ready, error=None):
+        with self.lock:
+            self._status = (ready, error)
+
+    def _run(self):
+        output = None
+        applied = [QUIET, QUIET]
+        while not self.stopping.is_set():
+            if output is None:
+                try:
+                    output = self.factory()
+                except Exception as error:
+                    self._set_status(False, str(error))
+                    if self.stopping.wait(self.retry_seconds):
+                        break
+                    continue
+                applied = [QUIET, QUIET]
+                self._set_status(True)
+
+            self.wake.wait(.01 if self.pcm is not None else None)
+            self.wake.clear()
+            if self.stopping.is_set():
+                break
+            with self.lock:
+                desired = list(self.desired)
+            try:
+                if self.pcm is not None:
+                    now = time.monotonic()
+                    output.render_pcm(self.pcm.take(now), now)
+                else:
+                    for side, value in enumerate(desired):
+                        if value != applied[side]:
+                            output.set(side, *value)
+                            applied[side] = value
+                    output.render()
+            except Exception as error:
+                try:
+                    output.close()
+                except Exception:
+                    pass
+                output = None
+                applied = [QUIET, QUIET]
+                self._set_status(False, str(error))
+                if self.stopping.wait(self.retry_seconds):
+                    break
+        if output is not None:
+            try:
+                output.close()
+            except Exception:
+                pass
+
+
+class GripTrace(TriggerTrace):
+    def emit(self, event, now, **values):
+        self.write({"type": "grip-trace", "event": event, "monotonic_s": now, **values})
+
+
 class GripHaptics:
     """DS5 左右触觉（包络映射）与传统震动（byte3/4）取较强者，送到 Sensa 两个握把。"""
 
@@ -147,13 +256,24 @@ class GripHaptics:
         self.last_audio = None
         self.previous = [QUIET, QUIET]
         self.stats = {"audio_frames": 0, "audio_resyncs": 0, "audio_errors": 0, "timeouts": 0}
+        self.trace = GripTrace(os.environ.get("WOLVERINE_GRIP_TRACE_FLAG"), seconds=30)
+        self.rumble_report = None
+        self.rumble_reports = self.nonzero_rumble_reports = 0
 
     def attach(self, output):
+        if isinstance(output, NullGrips):
+            self.trace.close(time.monotonic())
         # 新输出是静止的；记录清零后下一步把当前状态完整发一次。
         self.output = output
         self.previous = [QUIET, QUIET]
 
+    @property
+    def pcm(self):
+        return self.output.pcm if isinstance(self.output, SensaOutputWorker) else None
+
     def clear_audio(self):
+        if self.pcm is not None:
+            self.pcm.clear()
         self.converter.reset()
         self.audio = [QUIET, QUIET]
         self.last_audio = None
@@ -165,6 +285,9 @@ class GripHaptics:
             # hid-playstation：flag0 bit0 或 flag2 bit2 表示 byte3（右）/byte4（左）有效。
             if len(report) > 4 and report[0] == 2 and (report[1] & 0x01 or len(report) > 39 and report[39] & 0x04):
                 self.rumble = (report[4] / 255, report[3] / 255)
+                self.rumble_report = report.hex()
+                self.rumble_reports += 1
+                self.nonzero_rumble_reports += any(self.rumble)
         elif kind == "reset":
             if message["generation"] > self.generation:
                 self.clear_audio()
@@ -185,10 +308,15 @@ class GripHaptics:
                 # 游戏重开触觉流会让帧号跳变；从新位置重新分析，不拖垮输入链路。
                 self.stats["audio_resyncs"] += generation == self.generation
                 self.converter.reset()
+                if self.pcm is not None:
+                    self.pcm.clear()
                 self.generation = generation
+            self.converter.soft = self.settings.grip_soft
             parameters = self.converter.push(pcm)
             if parameters:
                 self.audio = [(side["amplitude"], side["frequency_hz"]) for side in parameters[-1]["channels"]]
+            if self.pcm is not None:
+                self.pcm.push(pcm, now)
             self.next_frame = first + count
             self.stats["audio_frames"] += count
             self.last_audio = now
@@ -211,65 +339,104 @@ class GripHaptics:
         if self.last_audio is not None and now - self.last_audio >= .05:
             self.clear_audio()
             self.stats["timeouts"] += 1
+        if self.pcm is not None:
+            self.pcm.configure(MixState(self.settings, self.rumble, self.test_target, (l2 / 255, r2 / 255)), now)
         for side, value in enumerate(self.mix(l2, r2)):
             if value != self.previous[side]:
                 self.output.set(side, *value)
                 self.previous[side] = value
         self.output.render()
+        if self.trace.flag is not None:
+            # 记录已发送参数及来源；诊断开关不参与映射，也不额外发送震动。
+            selected = []
+            for side, (amplitude, _) in enumerate(self.previous):
+                selected.append("quiet" if amplitude == 0 else "test" if self.test_target else
+                                "rumble" if self.rumble[side] * LIMIT > self.audio[side][0] else "pcm")
+            self.trace.sample({"pcm": list(self.audio), "pcm_live": self.last_audio is not None,
+                               "rumble": list(self.rumble), "rumble_report": self.rumble_report,
+                               "rumble_reports": self.rumble_reports,
+                               "nonzero_rumble_reports": self.nonzero_rumble_reports,
+                               "selected": selected, "output": list(self.previous),
+                               "test_target": self.test_target, "grip_enabled": self.settings.grip_enabled,
+                               "grip_gain": self.settings.grip_gain}, now)
 
 
 class Devices:
-    def __init__(self, pad, grips):
+    def __init__(self, pad, grips, owns_grips=True):
         self.pad, self.grips = pad, grips
+        self.owns_grips = owns_grips
+
+    def close_grips(self):
+        grips, self.grips = self.grips, None
+        if grips is not None:
+            try:
+                grips.close()
+            except (OSError, RuntimeError) as error:
+                print(f"Sensa cleanup failed: {error}", file=sys.stderr, flush=True)
+
+    def render(self, haptics, l2, r2, now):
+        if isinstance(self.grips, SensaOutputWorker):
+            status = self.grips.take_status()
+            if status is not None:
+                ready, error = status
+                details = {"backend": "sensa", "grips_ready": ready}
+                if error:
+                    details["grip_error"] = error
+                gip_bridge.STATUS.set("connected", **details)
+        haptics.step(l2, r2, now)
 
     def close(self):
         try:
-            self.grips.close()
+            if self.owns_grips:
+                self.close_grips()
+            elif self.grips is not None:
+                self.grips.silence()
         finally:
             self.pad.close()
 
 
-def open_devices():
-    """手柄输入或 Sensa 任一不可用都按“等待”处理，reconnect_loop 每秒重试；原因写进状态给界面显示。"""
+def open_devices(grips=None):
+    """输入先恢复；Sensa 在会话中单独重试，虚拟 DS5 始终保留。"""
     try:
         pad = RazerInput()
     except RuntimeError as error:
         gip_bridge.STATUS.set("waiting", reason="input", error=str(error))
         raise ConnectionError(str(error)) from error
-    try:
-        grips = SensaGrips()
-    except (OSError, RuntimeError) as error:
-        pad.close()
-        gip_bridge.STATUS.set("waiting", reason="sensa", error=str(error))
-        raise ConnectionError(str(error)) from error
-    return Devices(pad, grips)
+    return Devices(pad, grips, owns_grips=grips is None)
 
 
 def session(devices, capture_proc, events, haptics, counts):
-    haptics.attach(devices.grips)
-    gip_bridge.STATUS.set("connected", backend="sensa")
+    haptics.attach(devices.grips or NullGrips())
+    gip_bridge.STATUS.set("connected", backend="sensa",
+                          grips_ready=bool(getattr(devices.grips, "ready", devices.grips is not None)))
     print("PC-mode bridge ready: Sensa grips, no trigger motors", flush=True)
     start = last_stats = last_meter = time.monotonic()
     last_state, last_sent, input_updates = None, 0, 0
+    input_clock, grip_clock = InputCadence(1000), InputCadence(250)
+    input_reads = 0
     try:
         while True:
             tick = time.monotonic()
-            try:
-                state = devices.pad.read()
-            except RuntimeError as error:
-                raise ConnectionError(str(error)) from error
-            if gip_bridge.input_due(last_state, state, tick, last_sent):
+            if input_clock.due(tick):
                 try:
-                    capture_proc.stdin.write(json.dumps({"type": "input", "state": state}) + "\n")
-                    capture_proc.stdin.flush()
-                except BrokenPipeError:
-                    print("ERROR: wolverine-capture stdin broken", file=sys.stderr, flush=True)
-                    return 1
-                last_state, last_sent = state, time.monotonic()
-                input_updates += 1
+                    state = devices.pad.read()
+                except RuntimeError as error:
+                    raise ConnectionError(str(error)) from error
+                input_reads += 1
+                if gip_bridge.input_due(last_state, state, tick, last_sent):
+                    try:
+                        capture_proc.stdin.write(json.dumps({"type": "input", "state": state}) + "\n")
+                        capture_proc.stdin.flush()
+                    except BrokenPipeError:
+                        print("ERROR: wolverine-capture stdin broken", file=sys.stderr, flush=True)
+                        return 1
+                    last_state, last_sent = state, time.monotonic()
+                    input_updates += 1
 
             gip_bridge.drain(events, haptics, counts)
-            haptics.step(state["L2"], state["R2"], time.monotonic())
+            now = time.monotonic()
+            if grip_clock.due(now):
+                devices.render(haptics, state["L2"], state["R2"], now)
 
             now = time.monotonic()
             motors = [round(side[0], 3) for side in haptics.previous] + [0, 0]
@@ -280,21 +447,58 @@ def session(devices, capture_proc, events, haptics, counts):
                 last_meter = now
             if now - last_stats >= 5.0:
                 print(json.dumps({"elapsed_s": round(now - start, 1), "input_updates": input_updates,
+                                  "input_reads": input_reads, "input_target_hz": 1000,
+                                  "input_read_hz": round(input_reads / (now - start), 1),
                                   "grips": haptics.previous, **haptics.stats,
                                   "capture_messages": dict(counts)}), flush=True)
                 last_stats = now
             if capture_proc.poll() is not None:
                 print("ERROR: wolverine-capture exited", file=sys.stderr, flush=True)
                 return 1
-            time.sleep(max(0, .004 - (time.monotonic() - tick)))
+            time.sleep(max(0, min(input_clock.next_read, grip_clock.next_read) - time.monotonic()))
+    except (OSError, RuntimeError) as error:
+        # 切换连接时立刻松开旧按键；只重开实体设备，不让游戏丢失虚拟 DS5。
+        try:
+            capture_proc.stdin.write(json.dumps({"type": "input", "state": input_state([0] * 6, set())}) + "\n")
+            capture_proc.stdin.flush()
+        except (OSError, ValueError):
+            pass
+        haptics.clear_audio()
+        raise ConnectionError(str(error)) from error
     finally:
+        if isinstance(devices.grips, SensaOutputWorker):
+            devices.grips.silence()
         haptics.attach(NullGrips())
 
 
 def main():
-    return gip_bridge.main(lambda capture_proc: gip_bridge.serve(
-        capture_proc, make_haptics=lambda saved: GripHaptics(NullGrips(), saved),
-        opener=open_devices, run_session=session))
+    multiband = (os.environ.get("WOLVERINE_MULTIBAND") == "1"
+                 or pathlib.Path(__file__).with_name("multiband.enabled").is_file())
+    if multiband:
+        print("PC multiband candidate: PCM encoder + Mixer; bounded 40ms queue", flush=True)
+
+    def serve_capture(capture_proc):
+        worker = None
+
+        def opener():
+            nonlocal worker
+            if worker is None:
+                devices = open_devices()
+                worker = (SensaOutputWorker(factory=MultibandGrips, pcm=PcmMailbox())
+                          if multiband else SensaOutputWorker())
+                devices.grips = worker
+                devices.owns_grips = False
+                return devices
+            return open_devices(worker)
+
+        try:
+            return gip_bridge.serve(capture_proc, make_haptics=lambda saved: GripHaptics(NullGrips(), saved),
+                                    opener=opener, run_session=session)
+        finally:
+            if worker is not None:
+                worker.close()
+
+    return gip_bridge.main(serve_capture)
 
 
 if __name__ == "__main__":

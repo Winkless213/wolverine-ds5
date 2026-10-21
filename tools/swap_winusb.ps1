@@ -108,7 +108,7 @@ $before = '{05f5cfe2-4733-4950-a6bb-07aad01a3a84}'
 "class before: $before"
 try {
     if ($Install) { & "$PSScriptRoot\set_class.ps1" -InstanceId $InstanceId -ClassGuid '{88BAE032-5A81-49f0-BC3D-A4FF138216D6}' }
-    if ($Restore) { & "$PSScriptRoot\set_class.ps1" -InstanceId $InstanceId -ClassGuid $before }
+    if ($Restore) { & "$PSScriptRoot\set_class.ps1" -InstanceId $InstanceId -ClassGuid $before -AllowAbsent }
     $out = if ($Restore) { [WinUsbSwap]::Restore($InstanceId) }
            else { [WinUsbSwap]::Run($InstanceId, "$env:WINDIR\INF\winusb.inf", $Install.IsPresent) }
     $out

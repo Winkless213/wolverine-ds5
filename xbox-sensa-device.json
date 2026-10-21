@@ -1,0 +1,118 @@
+{
+  "DeviceName": "Sage T1",
+  "Manufacturer": "Razer",
+  "NumberBodyPart": 4,
+  "StreamBodyType": 1,
+  "TargetingType": 1,
+  "Version": "1.0",
+  "Bodypart": [
+    {
+      "BodypartID": 216,
+      "Characteristics": {
+        "Resolution": {
+          "AllEqual": 1,
+          "Angle": 1,
+          "Height": 1,
+          "Offset": 0
+        },
+        "ValueReport": [
+          {
+            "ActuatorType": 2,
+            "FrequencyMax": 300,
+            "FrequencyMin": 20,
+            "FrequencyResonance": 50,
+            "Height": 0,
+            "Theta": 0
+          }
+        ]
+      },
+      "Perception": 1,
+      "StreamCharacteristics": {
+        "Bands": 2,
+        "Points": 2,
+        "Transients": 2
+      }
+    },
+    {
+      "BodypartID": 116,
+      "Characteristics": {
+        "Resolution": {
+          "AllEqual": 1,
+          "Angle": 1,
+          "Height": 1,
+          "Offset": 0
+        },
+        "ValueReport": [
+          {
+            "ActuatorType": 2,
+            "FrequencyMax": 300,
+            "FrequencyMin": 20,
+            "FrequencyResonance": 50,
+            "Height": 0,
+            "Theta": 0
+          }
+        ]
+      },
+      "Perception": 1,
+      "StreamCharacteristics": {
+        "Bands": 2,
+        "Points": 2,
+        "Transients": 2
+      }
+    },
+    {
+      "BodypartID": 249,
+      "Characteristics": {
+        "Resolution": {
+          "AllEqual": 1,
+          "Angle": 1,
+          "Height": 1,
+          "Offset": 0
+        },
+        "ValueReport": [
+          {
+            "ActuatorType": 2,
+            "FrequencyMax": 300,
+            "FrequencyMin": 0,
+            "FrequencyResonance": 20,
+            "Height": 0,
+            "Theta": 0
+          }
+        ]
+      },
+      "Perception": 1,
+      "StreamCharacteristics": {
+        "Bands": 2,
+        "Points": 2,
+        "Transients": 2
+      }
+    },
+    {
+      "BodypartID": 149,
+      "Characteristics": {
+        "Resolution": {
+          "AllEqual": 1,
+          "Angle": 1,
+          "Height": 1,
+          "Offset": 0
+        },
+        "ValueReport": [
+          {
+            "ActuatorType": 2,
+            "FrequencyMax": 300,
+            "FrequencyMin": 0,
+            "FrequencyResonance": 20,
+            "Height": 0,
+            "Theta": 0
+          }
+        ]
+      },
+      "Perception": 1,
+      "StreamCharacteristics": {
+        "Bands": 2,
+        "Points": 2,
+        "Transients": 2
+      }
+    }
+  ]
+}

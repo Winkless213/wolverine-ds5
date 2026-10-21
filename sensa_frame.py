@@ -1,4 +1,4 @@
-"""解析本次 HAR 构建的 Sage T1 压缩帧，仅用于离线取证。"""
+"""解析 HAR 与雷蛇采样编码器生成的 Sage T1 压缩帧，校验频带与填充位。"""
 
 
 def decode_frame(data):
@@ -22,8 +22,8 @@ def decode_frame(data):
     for bodypart in (216, 116):
         channel = {"bodypart": bodypart, "bands": [], "transients": []}
         for _ in range(3):
-            if read(1) != 1:
-                raise ValueError("Unverified optional-band encoding")
+            if not read(1):
+                break
             channel["bands"].append([{"amplitude_code":read(6), "frequency_code":read(7)} for _ in range(4)])
         for _ in range(2):
             if not read(1):

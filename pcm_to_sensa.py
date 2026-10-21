@@ -107,25 +107,41 @@ ENVELOPE_FRAMES = 480
 ENVELOPE_GAIN = 1.2
 ENVELOPE_LIMIT = 1.0
 ENVELOPE_EXPONENT = .75
-ENVELOPE_BAND = (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) >= 5) & (np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE) <= 400)
-ENVELOPE_FREQUENCIES = np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE)[ENVELOPE_BAND]
+SPECTRUM_FREQUENCIES = np.fft.rfftfreq(FFT_SIZE, 1 / SAMPLE_RATE)
+ENVELOPE_BAND = (SPECTRUM_FREQUENCIES >= 5) & (SPECTRUM_FREQUENCIES <= 400)
+ENVELOPE_FREQUENCIES = SPECTRUM_FREQUENCIES[ENVELOPE_BAND]
+# 雷蛇本机给战狼的音频转震动 profile：haptic_EQ 50Hz 以下 1、100–150Hz 0.3，输入 30–130Hz 线性压到 30–80Hz；
+# 130Hz 以上在其带通外，这里到 200Hz 衰减为 0。
+SOFT_WEIGHTS = np.interp(SPECTRUM_FREQUENCIES, (0, 50, 100, 130, 200), (1, 1, .3, .3, 0))
 
 
-def envelope_tone(samples, bodypart):
+def envelope_tone(samples, bodypart, soft=False):
     """10ms 峰值包络 ×1.2 后取 0.75 次方作强度：游戏多数触觉只有满幅的 2–5%，线性映射在握把上几乎摸不到；
-    开平方又把强弱压得太平，实机整体偏强。主频含 30Hz 以下（DS5 触觉常在 12–23Hz），夹到 Sensa 的 30–400Hz。"""
+    开平方又把强弱压得太平，实机整体偏强。主频含 30Hz 以下（DS5 触觉常在 12–23Hz），夹到 Sensa 的 30–400Hz。
+    soft 按雷蛇 profile 先做频率加权再取强度和主频，并把主频往低处压。"""
+    quiet = {"bodypart": bodypart, "amplitude": 0.0, "frequency_hz": 80.0}
     recent = samples[-ENVELOPE_FRAMES:]
     level = ENVELOPE_GAIN * float(np.sqrt(np.mean(recent ** 2))) * np.sqrt(2)
     if level <= .01:
-        return {"bodypart": bodypart, "amplitude": 0.0, "frequency_hz": 80.0}
-    amplitude = min(ENVELOPE_LIMIT, level ** ENVELOPE_EXPONENT)
+        return quiet
     spectrum = np.abs(np.fft.rfft((samples - samples.mean()) * np.hanning(len(samples)), n=FFT_SIZE))
+    if soft:
+        weighted = spectrum * SOFT_WEIGHTS
+        level *= float(np.sqrt(np.sum(weighted ** 2) / max(np.sum(spectrum ** 2), 1e-20)))
+        spectrum = weighted
+        if level <= .01:
+            return quiet
+    amplitude = min(ENVELOPE_LIMIT, level ** ENVELOPE_EXPONENT)
     peak = float(ENVELOPE_FREQUENCIES[np.argmax(spectrum[ENVELOPE_BAND])])
+    if soft:
+        peak = 30 + (peak - 30) / 2
     return {"bodypart": bodypart, "amplitude": amplitude, "frequency_hz": float(np.clip(peak, 30, 400))}
 
 
 class EnvelopeToSensa(PcmToSensa):
     """PC 模式 Sensa 用的映射（实机对比后选定）：不丢 30Hz 以下的能量，强度跟随包络。"""
+
+    soft = False
 
     def push(self, pcm):
         if not pcm or len(pcm) % 4:
@@ -138,6 +154,6 @@ class EnvelopeToSensa(PcmToSensa):
             self.pending = self.pending[HOP_FRAMES:]
             self.frames += HOP_FRAMES
             result.append({"end_frame": self.frames, "warmup": len(self.history) < WINDOW_FRAMES,
-                           "channels": [envelope_tone(self.history[:, side], part)
+                           "channels": [envelope_tone(self.history[:, side], part, self.soft)
                                         for side, part in enumerate((216, 116))]})
         return result

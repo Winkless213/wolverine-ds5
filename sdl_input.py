@@ -34,7 +34,8 @@ def input_state(axes, buttons):
     state = dict(zip(("LX", "LY", "RX", "RY"), (max(-128, min(127, value // 256)) for value in axes[:4])))
     state.update(L2=round(max(0, axes[4]) * 255 / 32767), R2=round(max(0, axes[5]) * 255 / 32767),
                  Buttons=0, DPad=0, AccelZ=-8192)
-    masks = {0:0x20, 1:0x40, 2:0x10, 3:0x80, 4:0x1000, 5:0x10000, 6:0x2000,
+    # 实体没有触摸板，View 键用于游戏中的触摸板点击。
+    masks = {0:0x20, 1:0x40, 2:0x10, 3:0x80, 4:0x20000, 5:0x10000, 6:0x2000,
              7:0x4000, 8:0x8000, 9:0x100, 10:0x200}
     for button, mask in masks.items():
         if button in buttons:

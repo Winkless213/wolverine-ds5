@@ -11,6 +11,8 @@ RANGES = {"grip_gain": (0.0, 1.5), "trigger_gain": (0.0, 1.5), "follow_ratio": (
 class Settings:
     grip_enabled: bool = True
     grip_gain: float = 1.0
+    # PC 模式握把按雷蛇自带 profile 压低高频（100Hz 以上减弱、主频往低处压），手感更钝更柔。
+    grip_soft: bool = False
     trigger_enabled: bool = True
     trigger_gain: float = 1.0
     # DS5 的 0x21/0x25 是扳机阻力（拉弓、扣扳机的“硬”感），纽扣马达只能硬震，默认不转换；
@@ -20,7 +22,7 @@ class Settings:
     trigger_follow: bool = False
     follow_ratio: float = 0.5
     audio_guard: bool = True
-    # PC 模式下用 HidHide 对游戏隐藏实体手柄，只放行桥接；界面开关切换时经 UAC 写入 HidHide。
+    # 保存运行时隐藏的偏好；托盘退出会撤销系统隐藏，下次启动再自动申请。
     hide_physical: bool = False
     # 隐藏时已登记的 USB 端口实例；HidHide 按实例隐藏，换到新 USB 口的手柄不在其中，需要重新隐藏。
     hidden_devices: tuple = ()

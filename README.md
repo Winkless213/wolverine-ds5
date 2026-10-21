@@ -2,19 +2,6 @@
 
 把雷蛇 Wolverine V3 Pro 手柄呈现为虚拟 PS5 DualSense，让只支持 DualSense 触觉的 PC 游戏（实测《死亡搁浅 2》）把触觉震动送到这只手柄上。Windows 托盘程序，个人项目。
 
-## 项目亮点
-
-- **USB 虚拟设备（Go）**：在开源 USB/IP 框架 VIIPER 上扩展触觉音频抓取（[wolverine-capture 分支](https://github.com/Winkless213/VIIPER/tree/wolverine-capture)）。环形缓冲加互斥锁，缓冲满时丢帧计数、不阻塞 USB 线程；桥接进程用 goroutine、channel、context 处理并发、信号和超时。
-- **信号处理（Python）**：触觉 PCM 取 10ms 峰值包络，依据游戏实测信号分布选定 0.75 次方映射曲线；对照实验中幅度响应从 28ms 降到 4ms。
-- **Windows 驱动处理**：`tools/swap_winusb.ps1` 通过 SetupAPI 切换和还原手柄驱动。查出提权进程拿到的是本地化（中文）驱动描述导致切换必然失败，改为与语言无关的匹配；还原时按兼容 ID 重装原驱动，无需重启。
-- **抓包与逆向分析**：Windows ETW 拿不到数据内容，改用 USBPcap 抓包分析手柄报告频率和时序；用 Ghidra（headless）和 ILSpy 静态分析厂商组件，还原触觉参数帧格式，作为实现参考。
-- **桌面程序**：PySide6 托盘程序，负责桥接启停、强度实时调节、驱动模式切换（UAC 提权）、用 HidHide 对游戏隐藏实体手柄、开机自启。
-- **测试**：pytest 210 项；每次实机验证都留有 JSON 证据（`validation/`）。
-
-技术栈：Go / Python / NumPy / PySide6 / USB/IP / USBPcap / Ghidra / Windows SetupAPI
-
-开发方式：本人负责方案、实机测试与验收，使用 AI 编程工具辅助编码。
-
 ## 工作原理
 
 1. Go 接收程序 `wolverine-capture`（基于 VIIPER 修改，GPL-3.0，源码见 [Winkless213/VIIPER 的 wolverine-capture 分支](https://github.com/Winkless213/VIIPER/tree/wolverine-capture)）在本机回环上通过 USB/IP 挂一只虚拟 DualSense。游戏把触觉作为四声道 USB 音频的后两路发给它。
@@ -30,6 +17,8 @@
 - 依赖：`numpy`、`PySide6-Essentials`、`PySide6-Fluent-Widgets`。
 - 仓库不含二进制：`wolverine-capture.exe` 需从上面的 VIIPER 分支自行编译（`go build -o wolverine-capture.exe ./cmd/wolverine-capture`），`SDL3.dll` 从 [SDL 官方 release](https://github.com/libsdl-org/SDL/releases) 下载，都放在仓库根目录。
 - PC 模式需要本机已安装的雷蛇 Synapse，程序从其安装目录加载 HAR 与 Provider，本仓库不包含也不分发雷蛇的任何文件。
+- PC 模式启动时检查雷云，未运行时通过安装器创建的开始菜单快捷方式自动打开；未找到入口会提示安装或手动启动。服务未就绪时明确显示“等待握把震动服务”，输入保持正常，握把自动重连。
+- 先打开桥接再进入游戏。若开启隐藏后已运行的 Steam 仍显示 Xbox，请完全退出游戏和 Steam 后重开；HidHide 设置不能替代应用重新枚举设备。
 - 启动托盘：`pythonw app\main.py`；测试：`python -m pytest -q`（`test_api_check.py` 需要编译好的 `wolverine-capture.exe`）。
 
 雷蛇、Razer、Wolverine、DualSense 等名称归各自所有者。本项目与雷蛇、索尼没有关联。
@@ -82,6 +71,7 @@ pythonw app\main.py
   - 震动页：握把与扳机的强度和开关，按住 LT／RT 测试对应马达。PC 模式下扳机项不可用。
   - 设备与系统页：驱动模式切换（仅 Xbox 路线）、开机自启、默认音频自动切回、隐藏实体手柄、日志。
 - 设置保存在 `%APPDATA%\WolverineDS5\settings.json`，滑块改动通过 stdin 实时送到桥接。日志在 `%LOCALAPPDATA%\WolverineDS5\logs`。
+- 托盘“退出”会先卸载本程序的虚拟 DS5，再停止桥接、解除战狼的全部 PC 接口隐藏，并恢复残留的 Xbox WinUSB 绑定；驱动恢复可能要求管理员权限。离线 Xbox 实例会恢复设备类别并核对 Windows 重装标记，下次接入 Xbox 模式时自动装回原厂驱动。恢复失败会保留程序并提示重试，结果记录在日志目录的 `native-exit.log`。强度和隐藏偏好保留，下次打开时自动重新隐藏；雷云配置不变。窗口右上角 × 仍只收进托盘。
 - 测试：`python -m pytest -q`，当前 210 项通过。
 
 以下为 Xbox 模式与早期原型的历史记录，保留原文。

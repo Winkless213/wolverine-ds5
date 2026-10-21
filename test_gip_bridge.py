@@ -219,6 +219,15 @@ class ReconnectTests(unittest.TestCase):
         self.assertEqual([json.loads(line) for line in lines],
                          [{"type": "status", "state": "waiting", "error": str(error)}])
 
+    def test_cleanup_error_after_unplug_does_not_restart_virtual_ds5(self):
+        first, second = Mock(), Mock()
+        first.close.side_effect = OSError("device already removed")
+        opener = Mock(side_effect=[first, second])
+        session = Mock(side_effect=[ConnectionError("unplugged"), 0])
+        self.assertEqual(reconnect_loop(opener, session, wait=Mock(), alive=lambda: True), 0)
+        self.assertEqual(session.call_count, 2)
+        second.close.assert_called_once()
+
     def test_capture_exit_ends_reconnect_loop(self):
         opener = Mock(side_effect=RuntimeError("USB device not found"))
         alive = Mock(side_effect=[True, False])

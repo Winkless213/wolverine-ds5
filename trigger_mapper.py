@@ -34,9 +34,49 @@ def decode_effect(data):
     return Effect()
 
 
+class ResistancePulse:
+    def __init__(self):
+        self.previous = None
+        self.armed = False
+        self.started = None
+
+    def sample(self, effect, position, now):
+        previous, self.previous = self.previous, position
+        if effect.mode != 0x21:
+            self.started = None
+            # 游戏短震结束后，仍按住的同一次动作不能再补一个阻力脉冲。
+            if effect.mode != 0x26:
+                self.armed = False
+            if position <= .02:
+                self.armed = True
+            return 0.0
+        active = [index for index, strength in enumerate(effect.strengths) if strength]
+        if not active:
+            self.started = None
+            return 0.0
+        threshold = max(.02, active[0] / 10)
+        if previous is None:
+            self.armed = position < threshold
+        # 留出回程余量，避免阻力起点附近的输入抖动反复触发。
+        if position <= max(0, threshold - .02):
+            self.armed, self.started = True, None
+        level = effect.strengths[min(9, int(position * 10))] if position > .02 else 0
+        if not level:
+            self.started = None
+            return 0.0
+        if self.armed and position >= threshold:
+            self.started, self.armed = now, False
+        if self.started is None:
+            return 0.0
+        # 60ms 保持原力度，随后 180ms 衰减到零；不放大原始协议力度。
+        envelope = min(1.0, max(0.0, (.24 - (now - self.started)) / .18))
+        return level * envelope
+
+
 class Trigger:
-    def __init__(self, gain=0.22):
+    def __init__(self, gain=0.22, feedback_envelope=False):
         self.gain = gain
+        self.feedback = ResistancePulse() if feedback_envelope else None
         self.effect = Effect()
         self.previous = None
         self.armed = False
@@ -54,13 +94,14 @@ class Trigger:
 
     def sample(self, position, now):
         if not math.isfinite(position) or not 0 <= position <= 1 or not math.isfinite(now):
-            self.__init__(self.gain)
+            self.__init__(self.gain, self.feedback is not None)
             return 0.0
         effect = self.effect
         amplitude = 0.0
         zone = min(9, int(position * 10))
+        feedback = self.feedback.sample(effect, position, now) if self.feedback is not None else None
         if effect.mode == 0x21:
-            amplitude = effect.strengths[zone]
+            amplitude = effect.strengths[zone] if feedback is None else feedback
         elif effect.mode == 0x25:
             if position <= effect.start - 0.02:
                 self.armed = True
@@ -84,10 +125,11 @@ class Trigger:
 
 
 class TriggerPair:
-    def __init__(self, gain=0.22):
+    def __init__(self, gain=0.22, feedback_envelope=False):
         self.gain = gain
-        self.left = Trigger(gain)
-        self.right = Trigger(gain)
+        self.feedback_envelope = feedback_envelope
+        self.left = Trigger(gain, feedback_envelope)
+        self.right = Trigger(gain, feedback_envelope)
         self.unsupported_modes = set()
         self.malformed_reports = 0
 
@@ -111,5 +153,5 @@ class TriggerPair:
                 self.right.sample(right_position, monotonic_seconds))
 
     def reset(self):
-        self.left = Trigger(self.gain)
-        self.right = Trigger(self.gain)
+        self.left = Trigger(self.gain, self.feedback_envelope)
+        self.right = Trigger(self.gain, self.feedback_envelope)

@@ -146,5 +146,37 @@ class EnvelopeTests(unittest.TestCase):
                 EnvelopeToSensa().push(pcm)
 
 
+def soft(pcm):
+    converter = EnvelopeToSensa()
+    converter.soft = True
+    return converter.push(pcm)[-1]["channels"]
+
+
+class SoftEnvelopeTests(unittest.TestCase):
+    def test_low_tones_keep_strength_and_compress_frequency(self):
+        default = envelope(pcm_tones(((.3, 40),)))[-1]["channels"][0]
+        self.assertAlmostEqual(soft(pcm_tones(((.3, 40),)))[0]["amplitude"], default["amplitude"], delta=.01)
+        left, right = soft(pcm_tones(((.3, 60),)))
+        self.assertAlmostEqual(left["frequency_hz"], 45, delta=5)
+        self.assertEqual(right["amplitude"], 0)
+
+    def test_high_tones_are_weakened_and_mapped_down(self):
+        default = envelope(pcm_tones(((.3, 160),)))[-1]["channels"][0]
+        left = soft(pcm_tones(((.3, 160),)))[0]
+        self.assertLess(left["amplitude"], default["amplitude"] / 2)
+        self.assertAlmostEqual(left["frequency_hz"], 95, delta=4)
+        self.assertEqual(soft(pcm_tones(((.4, 250),)))[0]["amplitude"], 0)
+
+    def test_low_part_of_a_mixture_sets_the_frequency(self):
+        mixture = pcm_tones(((.2, 50), (.4, 250)))
+        self.assertAlmostEqual(envelope(mixture)[-1]["channels"][0]["frequency_hz"], 250, delta=6)
+        self.assertAlmostEqual(soft(mixture)[0]["frequency_hz"], 40, delta=3)
+
+    def test_sub_30hz_still_vibrates_at_30hz(self):
+        left = soft(pcm_tones(((.3, 15),)))[0]
+        self.assertGreater(left["amplitude"], .05)
+        self.assertEqual(left["frequency_hz"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -170,6 +170,12 @@ class InputTests(unittest.TestCase):
         state = gip_host.dualsense_state(bytes.fromhex("0200") + bytes(30))
         self.assertEqual((state["Buttons"], state["DPad"]), (0, 0))
 
+    def test_view_input_presses_and_releases_touchpad(self):
+        pressed = gip_host.dualsense_state(bytes.fromhex("0800") + bytes(30))
+        released = gip_host.dualsense_state(bytes(32))
+        self.assertEqual(pressed["Buttons"], 0x20000)
+        self.assertEqual(released["Buttons"], 0)
+
 
 class AuthTests(unittest.TestCase):
     def test_tls12_sha256_prf_vector(self):

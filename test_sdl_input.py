@@ -35,8 +35,14 @@ class InputTests(unittest.TestCase):
 
     def test_xbox_buttons_and_dpad_map_to_dualsense(self):
         result = input_state([0]*6, {0, 2, 4, 6, 11, 14})
-        self.assertEqual(result["Buttons"], 0x3030)
+        self.assertEqual(result["Buttons"], 0x22030)
         self.assertEqual(result["DPad"], 9)
+
+    def test_view_clicks_touchpad_and_release_keeps_options(self):
+        self.assertEqual(input_state([0]*6, {4})["Buttons"], 0x20000)
+        self.assertEqual(input_state([0]*6, {4, 6})["Buttons"], 0x22000)
+        self.assertEqual(input_state([0]*6, {6})["Buttons"], 0x2000)
+        self.assertEqual(input_state([0]*6, set())["Buttons"], 0)
 
     def test_stick_extremes_and_trigger_press(self):
         result = input_state([-32768, 32767, 0, 256, 32767, 0], set())

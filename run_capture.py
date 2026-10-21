@@ -10,25 +10,12 @@ import threading
 import time
 
 from capture_recorder import CaptureRecorder
+from input_timing import InputCadence
 from sdl_input import RazerInput, input_state
 from trigger_mapper import TriggerPair
 from xusb_bridge import XusbBridge
 
 ROOT = pathlib.Path(__file__).resolve().parent
-
-
-class InputCadence:
-    def __init__(self, hz):
-        if hz not in (250, 1000):
-            raise ValueError("Input polling must be 250 or 1000 Hz")
-        self.period, self.next_read = 1 / hz, 0
-
-    def due(self, now):
-        if now < self.next_read:
-            return False
-        # 调度晚到时读取最新状态，不补发一串已经过时的输入。
-        self.next_read = now + self.period
-        return True
 
 
 def run(seconds, synthetic, *, sensa_preview=False, input_poll_hz=1000, xusb_output=False):

@@ -14,6 +14,7 @@ import settings
 from gip_host import GipHost, UsbTransport
 from settings import Settings
 from trigger_mapper import TriggerPair
+from trigger_trace import TriggerTrace
 from xusb_bridge import XusbBridge
 
 
@@ -34,7 +35,10 @@ class Haptics:
     """
 
     def __init__(self, output, settings=None):
-        self.mapper = TriggerPair(gain=1)
+        envelope = os.environ.get("WOLVERINE_TRIGGER_ENVELOPE") == "1"
+        self.mapper = TriggerPair(gain=1, feedback_envelope=envelope)
+        if envelope:
+            print("Trigger resistance mapping: contact pulse, 60ms hold + 180ms fade", flush=True)
         self.bridge = XusbBridge(output, limit=1)
         self.bridge.mix = self.mix
         self.settings = settings or Settings()
@@ -42,6 +46,7 @@ class Haptics:
         self.test_pressure = (0, 0)
         self.stalls = 0
         self.audio_errors = 0
+        self.trace = TriggerTrace(os.environ.get("WOLVERINE_TRIGGER_TRACE_FLAG"))
 
     def mix(self, values, now):
         left, right, lt, rt = values
@@ -60,6 +65,8 @@ class Haptics:
         return left, right, lt, rt
 
     def attach(self, output):
+        if isinstance(output, NullOutput):
+            self.trace.close(time.monotonic())
         # 重连后的手柄马达是停的；清掉已发记录，让当前效果在下一轮立刻重发。
         self.bridge.output = output
         self.bridge.previous = (0, 0, 0, 0)
@@ -73,12 +80,16 @@ class Haptics:
             if self.mapper.malformed_reports != malformed:
                 self.bridge.stop()
                 raise ValueError("Malformed trigger report; physical output stopped")
+            self.trace.output(report, now)
             # hid-playstation：flag0 bit0 或 flag2 bit2 表示 byte3（右）/byte4（左）有效。
             if report[1] & 0x01 or len(report) > 39 and report[39] & 0x04:
                 limit = self.bridge.stats["amplitude_limit"]
                 self.bridge.rumble = (report[4] / 255 * limit, report[3] / 255 * limit)
         elif message["type"] == "reset":
             self.mapper.reset()
+            self.trace.reset(now)
+        elif message["type"] == "stopped":
+            self.trace.close(now, "capture-stopped")
         try:
             self.bridge.accept(message, now=now)
         except (ValueError, TimeoutError):
@@ -104,6 +115,10 @@ class Haptics:
             # 长驻桥接不能因此退出，只计数并从下一轮继续。
             self.stalls += 1
             self.bridge.last_poll = None
+        self.trace.sample({"l2": l2, "r2": r2, "triggers": list(self.bridge.previous[2:]),
+                           "trigger_gain": self.settings.trigger_gain,
+                           "resistance_enabled": self.settings.trigger_resistance,
+                           "follow_enabled": self.settings.trigger_follow}, now)
 
 
 def handle_command(haptics, command):
@@ -214,12 +229,18 @@ def reconnect_loop(opener, session, wait, alive):
             STATUS.set("lost", error=repr(error))
             print(f"Controller lost ({error!r}); waiting for reconnect", file=sys.stderr, flush=True)
         finally:
-            transport.close()
+            try:
+                transport.close()
+            except (OSError, RuntimeError) as error:
+                # 已拔出的实体设备可能无法清理；不能因此销毁仍被游戏使用的虚拟 DS5。
+                print(f"Controller cleanup failed ({error!r}); continuing reconnect", file=sys.stderr, flush=True)
         wait()
     return 1
 
 
 def main(serve_capture=None):
+    if serve_capture is None and os.environ.get("WOLVERINE_XBOX_SENSA") == "1":
+        from xbox_sensa_bridge import serve as serve_capture
     print("Starting GIP to DualSense bridge...", flush=True)
     capture_proc = subprocess.Popen(
         [os.environ.get("GIP_BRIDGE_CAPTURE_EXE", "./wolverine-capture.exe"), "-port", "3240", "-duration", "24h"],

@@ -11,6 +11,7 @@ class SettingsTests(unittest.TestCase):
         settings = Settings()
         self.assertEqual((settings.grip_gain, settings.trigger_gain), (1.0, 1.0))
         self.assertFalse(settings.trigger_follow)
+        self.assertFalse(settings.grip_soft)
         self.assertTrue(settings.audio_guard)
 
     def test_out_of_range_values_are_clamped(self):
