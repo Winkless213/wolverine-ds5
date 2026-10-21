@@ -1,13 +1,44 @@
+import datetime
 import pathlib
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from app.core import (AUTOSTART_NAME, BridgeEvents, autostart_command, bridge_command, describe, driver_mode,
-                      format_duration, hidhide_script, parse_line, prune_logs, restore_xbox_script, usbip_attached)
+from app.core import (AUTOSTART_NAME, BridgeEvents, audio_to_haptics_active, autostart_command, bridge_command,
+                      conflict_tools, describe,
+                      driver_mode, format_duration, parse_line, prune_logs, restore_xbox_script,
+                      stale_windowed_processes, usbip_attached)
+
+
+class ConflictTests(unittest.TestCase):
+    def test_stale_processes_are_only_those_started_before_the_cloak(self):
+        processes = [{"name": "ZenlessZoneZero.exe", "path": r"D:\Games\ZZZ\ZenlessZoneZero.exe", "started": 100},
+                     {"name": "Weixin.exe", "path": r"C:\Program Files\Tencent\Weixin\Weixin.exe", "started": 200},
+                     {"name": "explorer.exe", "path": r"C:\Windows\explorer.exe", "started": 50},
+                     {"name": "wolverineds5.exe", "path": r"D:\Tools\WolverineDS5.exe", "started": 50},
+                     {"name": "Discord.exe", "path": r"D:\Apps\Discord.exe", "started": 120},
+                     {"name": "later.exe", "path": r"D:\Games\later.exe", "started": 300}]
+        stale = stale_windowed_processes(250, processes)
+        self.assertEqual([item["name"] for item in stale], ["ZenlessZoneZero.exe", "Discord.exe"])
+
+    def test_conflict_tools_report_only_known_virtual_pad_tools(self):
+        processes = [{"name": "Flydigi Space Station.exe"}, {"name": "chrome.exe"}]
+        self.assertEqual(conflict_tools(processes), ["飞智空间站（自带虚拟手柄）"])
+        self.assertEqual(conflict_tools([{"name": "chrome.exe"}]), [])
+
+    def test_audio_to_haptics_is_detected_only_while_it_keeps_streaming(self):
+        now = datetime.datetime(2026, 10, 21, 13, 0, 0)
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "wyvrn-logs.txt"
+            path.write_text("[12:59:50:000][Wyvrn.HapticService] Audio2Haptics-{abc} volume\n", encoding="utf-8")
+            self.assertTrue(audio_to_haptics_active(path, now=now))
+            path.write_text("[12:50:00:000][Wyvrn.HapticService] Audio2Haptics-{abc} volume\n", encoding="utf-8")
+            self.assertFalse(audio_to_haptics_active(path, now=now))
+            path.write_text("[12:59:59:000][Wyvrn.HapticService] unrelated line\n", encoding="utf-8")
+            self.assertFalse(audio_to_haptics_active(path, now=now))
 
 
 class DisplayTests(unittest.TestCase):
@@ -67,6 +98,14 @@ class DescribeTests(unittest.TestCase):
         self.assertEqual(key, "waiting")
         self.assertIn("Synapse", detail)
 
+    def test_input_connected_without_grips_is_not_reported_as_fully_ready(self):
+        status = {"state": "connected", "backend": "sensa", "grips_ready": False}
+        key, title, detail = describe(True, True, status, "pc")
+        self.assertEqual(key, "waiting")
+        self.assertIn("握把", title)
+        self.assertIn("输入正常", detail)
+        self.assertIn("Synapse", detail)
+
 
 class ParseLineTests(unittest.TestCase):
     def test_status_and_meter_lines_are_structured(self):
@@ -117,21 +156,6 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(bridge_command(frozen=True, executable="C:/W.exe", pc=True),
                          [str(pathlib.Path("C:/WolverineDS5-bridge.exe")), "--pc"])
 
-    def test_hiding_whitelists_the_bridge_and_hides_only_the_pc_mode_gamepad(self):
-        script = hidhide_script("C:/Python314/python.exe", hide=True)
-        self.assertIn("--app-reg", script)
-        self.assertIn("C:/Python314/python.exe", script)
-        self.assertIn("USB\\VID_1532&PID_0A4C&MI_00\\*", script)
-        self.assertIn("HID\\VID_1532&PID_0A4C&IG_*", script)
-        self.assertIn("--dev-hide", script)
-        self.assertIn("--cloak-on", script)
-
-    def test_unhiding_restores_the_gamepad_without_touching_other_hidhide_users(self):
-        script = hidhide_script("C:/Python314/python.exe", hide=False)
-        self.assertIn("--dev-unhide", script)
-        self.assertNotIn("--cloak", script)
-        self.assertNotIn("--app-unreg", script)
-
     def test_autostart_launches_minimised_to_tray(self):
         self.assertTrue(autostart_command(["C:/WolverineDS5.exe"]).endswith('"C:/WolverineDS5.exe" --tray'))
         self.assertEqual(AUTOSTART_NAME, "WolverineDS5")
@@ -143,6 +167,25 @@ class CommandTests(unittest.TestCase):
         # 删除设备节点会把无线接收器弄成 phantom，扫描扫不回来，只能物理拔插。
         self.assertNotIn("remove-device", script)
         self.assertNotIn("scan-devices", script)
+
+
+class PendingRestoreTests(unittest.TestCase):
+    def pending(self, present=(), config_flags=32, class_guid="{05f5cfe2-4733-4950-a6bb-07aad01a3a84}"):
+        from app import core
+        registry = Mock()
+        registry.OpenKey.return_value.__enter__ = Mock(return_value="key")
+        registry.OpenKey.return_value.__exit__ = Mock(return_value=False)
+        registry.QueryValueEx.side_effect = [(config_flags, 4), (class_guid, 1)]
+        with patch.dict(sys.modules, winreg=registry), patch.object(core, "usb_instances", return_value=present):
+            return core.xbox_restore_pending(r"USB\VID_1532&PID_0A3F\TEST")
+
+    def test_offline_restore_requires_both_reinstall_flag_and_xbox_class(self):
+        self.assertTrue(self.pending())
+        self.assertFalse(self.pending(config_flags=0))
+        self.assertFalse(self.pending(class_guid="{88bae032-5a81-49f0-bc3d-a4ff138216d6}"))
+
+    def test_present_device_must_really_switch_driver(self):
+        self.assertFalse(self.pending(present=[r"usb\vid_1532&pid_0a3f\test"]))
 
 
 class LogTests(unittest.TestCase):

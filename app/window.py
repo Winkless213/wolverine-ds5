@@ -93,7 +93,7 @@ class InputView(QWidget):
     WIDTH, HEIGHT = 560, 175
     # (键名, 位掩码, 中心 x, 中心 y, 半径)，位掩码与 sdl_input.input_state 一致
     BUTTONS = (("Y", 0x80, 450, 78, 11), ("A", 0x20, 450, 122, 11), ("X", 0x10, 428, 100, 11),
-               ("B", 0x40, 472, 100, 11), ("", 0x1000, 240, 70, 6), ("", 0x10000, 280, 62, 10),
+               ("B", 0x40, 472, 100, 11), ("", 0x20000, 240, 70, 6), ("", 0x10000, 280, 62, 10),
                ("", 0x2000, 320, 70, 6))
     DPAD = ((1, 0, -1), (2, 0, 1), (4, -1, 0), (8, 1, 0))
 
@@ -295,7 +295,9 @@ class VibrationPage(Page):
         self.grip_enabled = SwitchCard(FluentIcon.GAME, "握把震动", "左右握把的大马达", settings.grip_enabled, grip)
         self.grip_gain = SliderCard(FluentIcon.SPEED_HIGH, "握把强度", "100% 为默认强度",
                                     settings.grip_gain, 150, grip)
-        for card in (self.grip_enabled, self.grip_gain):
+        self.grip_soft = SwitchCard(FluentIcon.MIX_VOLUMES, "柔和握把", "按雷蛇自带的音频震动参数压低高频，仅 PC 模式",
+                                    settings.grip_soft, grip)
+        for card in (self.grip_enabled, self.grip_gain, self.grip_soft):
             grip.addSettingCard(card)
         self.grip_test = TestCard("测试握把", "按 LT / RT 分别震左 / 右握把，按得越深越强",
                                   "测试中：按 LT 震左握把、RT 震右握把；游戏震动与扳机马达已暂停", grip)
@@ -330,7 +332,7 @@ class VibrationPage(Page):
             card.button.clicked.connect(
                 lambda _=False, target=target: self.test_requested.emit(None if self.testing == target else target))
 
-        for key in ("grip_enabled", "trigger_enabled", "trigger_resistance", "trigger_follow"):
+        for key in ("grip_enabled", "grip_soft", "trigger_enabled", "trigger_resistance", "trigger_follow"):
             getattr(self, key).switch.checkedChanged.connect(lambda checked, key=key: self._emit(key, checked))
         for key in ("grip_gain", "trigger_gain", "follow_ratio"):
             getattr(self, key).slider.valueChanged.connect(lambda percent, key=key: self._emit(key, percent / 100))
@@ -343,6 +345,7 @@ class VibrationPage(Page):
     def _sync(self):
         grip, trigger = self.grip_enabled.switch.isChecked(), self.trigger_enabled.switch.isChecked()
         self.grip_gain.setEnabled(grip)
+        self.grip_soft.setEnabled(grip)
         self.trigger_enabled.setEnabled(not self.pc_mode)
         trigger = trigger and not self.pc_mode
         for card in (self.trigger_gain, self.trigger_resistance, self.trigger_follow):
@@ -367,7 +370,7 @@ class VibrationPage(Page):
         self.trigger_test.set_active(target == "trigger")
 
 
-HIDE_TEXT = "PC 模式下游戏只看到虚拟 DualSense，避免按键提示来回切换；需要 HidHide 和管理员权限"
+HIDE_TEXT = "运行时对游戏隐藏战狼，退出时自动恢复；下次启动自动重新隐藏。需要 HidHide"
 HIDE_WARNINGS = {"port": "手柄接在开启隐藏后没用过的 USB 口，游戏可能又能看到它；请关闭再打开一次",
                  "app": "当前桥接程序还没被 HidHide 放行，读不到被隐藏的手柄；请关闭再打开一次"}
 
