@@ -29,7 +29,7 @@
 
 ### 从源码运行
 
-依赖：Python 3.11+，`numpy`、`psutil`、`PySide6-Essentials`、`PySide6-Fluent-Widgets`。仓库不含二进制：`wolverine-capture.exe` 需自行编译，`SDL3.dll` 从 [SDL 官方 release](https://github.com/libsdl-org/SDL/releases) 下载，都放在仓库根目录。
+依赖：Python 3.11+，`numpy`、`psutil`、`cryptography`、`PySide6-Essentials`、`PySide6-Fluent-Widgets`。仓库不含二进制：`wolverine-capture.exe` 需自行编译，`SDL3.dll` 从 [SDL 官方 release](https://github.com/libsdl-org/SDL/releases) 下载，都放在仓库根目录。
 
 编译接收程序（需要 Go 工具链）：从上述 VIIPER 分支获取源码，在源码根目录执行
 

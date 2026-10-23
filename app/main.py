@@ -642,6 +642,9 @@ def self_test():
             present = (root / name).exists()
             ok = ok and present
             report.append(f"{name}={present}")
+        # 桥接链路的第三方依赖（如 cryptography）必须随包，缺了 Xbox/GIP 路线会在运行时才炸。
+        import pc_bridge  # noqa: F401
+        report.append("bridge_import=ok")
         report.append(f"python={sys.version.split()[0]} numpy={numpy.__version__}")
     except Exception:
         ok = False

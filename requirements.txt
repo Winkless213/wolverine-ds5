@@ -1,2 +1,4 @@
 numpy==2.3.5
 psutil==7.2.2
+# 桥接经 gip_host 做 GIP 握手，导入时就要用到
+cryptography
