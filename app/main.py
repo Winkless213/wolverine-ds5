@@ -624,5 +624,34 @@ def main(argv=None):
     return qt.exec()
 
 
+def self_test():
+    """安装后自检：只验证依赖和随包文件，不启动桥接、不碰驱动与手柄。"""
+    import tempfile
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    report, ok = [], True
+    try:
+        from PySide6.QtWidgets import QApplication
+        import numpy
+        import psutil
+        import qfluentwidgets
+        qt = QApplication([])
+        report.append(f"qt_platform={qt.platformName()}")
+        root = core.root_dir()
+        for name in ("wolverine-capture.exe", "SDL3.dll", "xbox-sensa-device.json", "sensa-device.json"):
+            present = (root / name).exists()
+            ok = ok and present
+            report.append(f"{name}={present}")
+        report.append(f"python={sys.version.split()[0]} numpy={numpy.__version__}")
+    except Exception:
+        ok = False
+        report.append(traceback.format_exc())
+    log = pathlib.Path(tempfile.gettempdir()) / "WolverineDS5-self-test.log"
+    log.write_text("\n".join(report + (["OK"] if ok else ["FAILED"])) + "\n", encoding="utf-8")
+    return 0 if ok else 3
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     sys.exit(main())
