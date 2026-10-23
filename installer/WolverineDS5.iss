@@ -51,6 +51,7 @@ Source: "{#AppSrc}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\DEVELOPMENT_LOG.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\reference-licenses\*"; DestDir: "{app}\reference-licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
