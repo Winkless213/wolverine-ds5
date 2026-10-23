@@ -14,3 +14,4 @@ SDL3.dll
 # 本机交接与临时备份不入库
 HANDOFF.md
 *.bak
+work/
