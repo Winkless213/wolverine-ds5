@@ -1,4 +1,4 @@
-# Wolverine DS5
+﻿# Wolverine DS5
 
 把雷蛇 Wolverine V3 Pro 手柄呈现为虚拟 PS5 DualSense，让只支持 DualSense 触觉的 PC 游戏把震动送到这只手柄。Windows 托盘程序，个人项目。
 
@@ -25,7 +25,7 @@
 
 ### 安装包
 
-从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.0.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖。
+从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.1.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖。
 
 ### 从源码运行
 

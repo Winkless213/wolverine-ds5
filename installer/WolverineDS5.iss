@@ -1,9 +1,9 @@
-; Wolverine DS5 installer (Inno Setup 7)
+﻿; Wolverine DS5 installer (Inno Setup 7)
 ; 先构建 PyInstaller onedir 包（含 wolverine-capture.exe 与 SDL3.dll），再运行：
 ;   ISCC.exe installer\WolverineDS5.iss
 
 #define AppName "Wolverine DS5"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppPublisher "Winkless213"
 #define AppURL "https://github.com/Winkless213/wolverine-ds5"
 #define AppExe "WolverineDS5.exe"
@@ -18,7 +18,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.0.1.0
 VersionInfoDescription={#AppName} installer
 VersionInfoProductName={#AppName}
 DefaultDirName={localappdata}\Programs\{#AppName}
