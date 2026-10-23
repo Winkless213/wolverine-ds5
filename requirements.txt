@@ -2,3 +2,6 @@ numpy==2.3.5
 psutil==7.2.2
 # 桥接经 gip_host 做 GIP 握手，导入时就要用到
 cryptography
+# 托盘程序（app/）的界面
+PySide6-Essentials==6.12.0
+PySide6-Fluent-Widgets==1.11.3
