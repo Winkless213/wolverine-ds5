@@ -267,6 +267,9 @@ class GripHaptics:
         self.output = output
         self.previous = [QUIET, QUIET]
 
+    def set_soft(self, soft):
+        self.converter.soft = soft
+
     @property
     def pcm(self):
         return self.output.pcm if isinstance(self.output, SensaOutputWorker) else None

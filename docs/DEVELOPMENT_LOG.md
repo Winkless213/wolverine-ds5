@@ -188,6 +188,19 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 版本号改动必须重新构建 onedir 包，不能继续复用 1.0.1 的包。重建用 `tools/build_candidate.py` 以 1.0.1 包为基线逐模块比对字节码：除 `app`（版本号所在模块）外全部一致，接收程序与随包资产哈希不变；该脚本原先按 `<模块>.py` 定位源码，现在支持包目录（`app` → `app/__init__.py`）。
 - 验证：两个 exe 的 FileVersion/ProductVersion 均为 1.0.4.0，自检 OK；1.0.4 静默安装、安装后自检、`-CheckOnly`、静默卸载均 exit 0。新包比 1.0.1 多出 `_internal/tools/install-dependencies.ps1`（PyInstaller 把 `tools` 当包收集，内容与仓库副本一致），安装器实际用的是 `{app}\tools` 下那一份，不影响运行。
 
+**Wolverine DS5 · 2026-10-24（1.0.4 后：补全 Xbox 桥接 pyusb/libusb 依赖）**
+
+- 1.0.4 随包桥接缺少 `pyusb`/`libusb_package` 及其 DLL `libusb-1.0.dll`，Xbox 模式启动 `gip_host.UsbTransport` 时会 `ImportError`，被 `supervise` 每 3 秒重启，表现为界面一直"正在连接"。PC 模式不受影响（不实例化 `UsbTransport`）。
+- 修复：`requirements.txt` 添加 `pyusb==1.3.1`、`libusb-package==1.0.30.0`；`WolverineDS5.spec` 给桥接 `hiddenimports` 显式加入 `usb`、`usb.core`、`usb.util`、`usb.backend.libusb1`、`libusb_package`，并用 `collect_data_files("libusb_package")` 把 DLL 同时收集到 `libusb_package` 包目录（`libusb_package.get_library_path()` 在打包后从这里找）；托盘 `--self-test` 增加 `libusb_package.get_library_path()` 存在性检查；`tools/build_candidate.py` 的 `compiled()` 对仓库中无源码的第三方模块直接放行，避免加入新依赖后比对失败。
+- 验证：候选包 `work/build-104-xusbfix/WolverineDS5` 自检 `libusb_package_dll=True`、整体 `OK`；桥接 exe 内出现 `libusb_package`、`usb.core`、`usb.util`、`usb.backend.libusb1`；`_internal/` 同时有 `libusb-1.0.dll`（hook）和 `libusb_package/libusb-1.0.dll`（供 `get_library_path()`）。`tools/build_candidate.py` 的基线比对仍报 `passed=false`，原因是本机构建环境当前为 `numpy==2.4.3`，而基线 `dist/WolverineDS5` 是 `numpy==2.3.5`，缺失 `numpy._core._machar` 等内部模块，与本次修复无关。
+
+**Wolverine DS5 · 2026-10-24（Xbox 模式支持柔和握把）**
+
+- 原"柔和握把"开关标注"仅 PC 模式"：PC 模式在 [pc_bridge.py](pc_bridge.py) 用 `EnvelopeToSensa` 做包络映射并写 Sensa 帧到两个握把；Xbox 模式在 [xusb_bridge.py](xusb_bridge.py) 用 `PcmToSensa` 做主频映射并写 XUSB 四马达报文，因此不曾读取 `settings.grip_soft`。
+- 修复：[xusb_bridge.py](xusb_bridge.py) 增加 `soft` 参数：关时保持 `PcmToSensa`（现有 Xbox 手感），开时切到 `EnvelopeToSensa(soft=True)`（与 PC 模式同一套包络/加权逻辑）；[gip_bridge.py](gip_bridge.py) 在创建 `XusbBridge` 和收到 `settings` 更新时同步 `grip_soft`；[app/window.py](app/window.py) 去掉"仅 PC 模式"文案。
+- 说明：Xbox 模式最终输出仍是 XUSB 9 字节报文，每个马达只有强度字节，没有频率信息，因此柔和握把的频率压低部分不会体现在硬件上，只保留高频能量的振幅衰减；对称/非对称差异也来源于此——PC 的 Sensa 帧可以携带左右独立频带，XUSB 只能发四个独立强度。
+- 验证：`test_xusb_bridge.py` 新增 `test_soft_mode_uses_envelope_converter_with_soft_flag`、`test_set_soft_switches_converter_at_runtime`；`test_xusb_bridge.py`、`test_gip_bridge.py`、`app/test_app.py` 共 96 项通过。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。

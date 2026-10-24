@@ -2,13 +2,15 @@
 import time
 
 from capture_recorder import decode_audio_block
-from pcm_to_sensa import PcmToSensa
+from pcm_to_sensa import EnvelopeToSensa, PcmToSensa
 from xusb_output import XusbOutput
 
 
 class XusbBridge:
-    def __init__(self, output=None, limit=.22):
-        self.converter = PcmToSensa(limit)
+    def __init__(self, output=None, limit=.22, soft=False):
+        self.limit = limit
+        self.soft = soft
+        self.converter = self._make_converter()
         self.output = output if output is not None else XusbOutput()
         self.closed = False
         self.ended = False
@@ -19,11 +21,25 @@ class XusbBridge:
         self.generation = self.next_frame = 0
         self.last_audio = self.last_poll = self.last_write = None
         self.previous = (0, 0, 0, 0)
-        self.stats = {"backend": "xusb", "mapping": "stereo dominant-tone amplitude only",
+        self.stats = {"backend": "xusb", "mapping": "stereo dominant-tone amplitude only" if not soft else "stereo envelope amplitude",
                       "frequency_preserved": False, "amplitude_limit": limit,
                       "max_update_hz": 50, "refresh_ms": 100, "watchdog_ms": 50,
                       "audio_frames": 0, "timeouts": 0, "resets": 0,
                       "hardware_output_attempted": False, "physical_latency_measured": False}
+
+    def _make_converter(self):
+        if self.soft:
+            converter = EnvelopeToSensa(self.limit)
+            converter.soft = True
+            return converter
+        return PcmToSensa(self.limit)
+
+    def set_soft(self, soft):
+        if soft != self.soft:
+            self.soft = soft
+            self.converter = self._make_converter()
+            self.grips = (0, 0)
+            self.stats["mapping"] = "stereo envelope amplitude" if soft else "stereo dominant-tone amplitude only"
 
     def stop(self):
         self.converter.reset()

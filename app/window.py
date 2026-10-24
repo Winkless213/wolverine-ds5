@@ -295,7 +295,7 @@ class VibrationPage(Page):
         self.grip_enabled = SwitchCard(FluentIcon.GAME, "握把震动", "左右握把的大马达", settings.grip_enabled, grip)
         self.grip_gain = SliderCard(FluentIcon.SPEED_HIGH, "握把强度", "100% 为默认强度",
                                     settings.grip_gain, 150, grip)
-        self.grip_soft = SwitchCard(FluentIcon.MIX_VOLUMES, "柔和握把", "按雷蛇自带的音频震动参数压低高频，仅 PC 模式",
+        self.grip_soft = SwitchCard(FluentIcon.MIX_VOLUMES, "柔和握把", "按雷蛇自带的音频震动参数压低高频",
                                     settings.grip_soft, grip)
         for card in (self.grip_enabled, self.grip_gain, self.grip_soft):
             grip.addSettingCard(card)
