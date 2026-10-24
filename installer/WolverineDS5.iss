@@ -8,6 +8,10 @@
 #define AppURL "https://github.com/Winkless213/wolverine-ds5"
 #define AppExe "WolverineDS5.exe"
 #define AppSrc "..\dist\WolverineDS5"
+; 随包托盘程序的版本取自 app/__init__.py（WolverineDS5.spec 写入 exe），与 AppVersion 不一致时先重新构建。
+#if GetFileProductVersionString(AddBackslash(SourcePath) + AppSrc + "\" + AppExe) != AppVersion
+  #error 随包的 WolverineDS5.exe 版本与 AppVersion 不一致，请先重新构建 PyInstaller 包
+#endif
 ; 已装 USBip 低于此版本时提示升级，tools\install-dependencies.ps1 的 $UsbipMinVersion 要保持一致。
 #define UsbipMinVersion "0.9.8.0"
 

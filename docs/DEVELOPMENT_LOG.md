@@ -184,6 +184,9 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 覆盖升级靠上游安装包自动卸载旧版：0.9.5.0 起各版 AppId 相同（`{199505b0-…}`），固定的 0.9.8.0 安装包在安装前经 UninsIS 以 `/SILENT /SUPPRESSMSGBOXES /NORESTART` 卸载旧版；0.9.3.x 的 AppId 不同，不在此列。
 - UAC 被取消时原提示「右键以管理员身份运行 `tools\install-dependencies.ps1`」走不通：.ps1 右键菜单没有以管理员身份运行，且不带 `-AutoInstall` 只检测不安装。改为提示重新运行安装包，README 同步。
 - 验证：32 位 PowerShell 下桩测试 26 项通过（新增：以低版本 PE 文件冒充 `usbip.exe` 时判为过旧、未要求安装时返回 `outdated`、升级后复检达标为 `installed`、升级后版本仍旧为 `failed`、缺失时的全新安装路径不变）；由真实 `[Code]` 生成的 Inno 探针（只替换 MsgBox、ShellExec 和 Program Files 路径）跑 7 种场景，对话框文字、提权参数与完成页重启判断符合预期；Inno 版本比较 0.9.7.8、0.9.7.99 低于 0.9.8.0，0.9.8.1、0.9.10.0、1.0.0.0 不低于；1.0.4 静默安装 exit 0、安装目录内脚本与仓库一致、自检 OK、`-CheckOnly` 为 present、静默卸载干净。真实的 0.9.7.8 → 0.9.8.0 升级未实测：不在本机安装已知有蓝屏问题的版本。
+- 托盘程序版本号一直没跟上：`app/__init__.py` 自 1.0.0 起就是 `0.1.0`，关于页因此显示 0.1.0，两个 exe 也没有文件版本。现在版本号只在 `app/__init__.py` 维护，`WolverineDS5.spec` 把它写进两个 exe 的版本资源；安装器编译时用 `GetFileProductVersionString` 核对随包 `WolverineDS5.exe` 与 `AppVersion`，不一致直接 `#error` 中止编译，防止再打出版本对不上的包。
+- 版本号改动必须重新构建 onedir 包，不能继续复用 1.0.1 的包。重建用 `tools/build_candidate.py` 以 1.0.1 包为基线逐模块比对字节码：除 `app`（版本号所在模块）外全部一致，接收程序与随包资产哈希不变；该脚本原先按 `<模块>.py` 定位源码，现在支持包目录（`app` → `app/__init__.py`）。
+- 验证：两个 exe 的 FileVersion/ProductVersion 均为 1.0.4.0，自检 OK；1.0.4 静默安装、安装后自检、`-CheckOnly`、静默卸载均 exit 0。新包比 1.0.1 多出 `_internal/tools/install-dependencies.ps1`（PyInstaller 把 `tools` 当包收集，内容与仓库副本一致），安装器实际用的是 `{app}\tools` 下那一份，不影响运行。
 
 **来源与构建**
 

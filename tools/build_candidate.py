@@ -39,7 +39,9 @@ def archive_modules(path):
 
 
 def module_path(source, name):
-    return source / (name.replace(".", "/") + ".py")
+    path = source / name.replace(".", "/")
+    # 包（如 app，版本号在它的 __init__.py）对应目录下的 __init__.py。
+    return path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
 
 
 def compiled(source, name, code):
@@ -126,7 +128,8 @@ def main():
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     source, baseline, output = Path(args.source).resolve(), Path(args.base).resolve(), Path(args.out).resolve()
-    allow = {name.removesuffix(".py").replace("\\", ".").replace("/", ".") for name in args.allow}
+    allow = {name.removesuffix(".py").replace("\\", ".").replace("/", ".").removesuffix(".__init__")
+             for name in args.allow}
     assets = frozen_assets(source) if args.verify_only is False else None
     if not args.verify_only and output.exists():
         raise SystemExit(f"{output} 已存在，拒绝覆盖")
