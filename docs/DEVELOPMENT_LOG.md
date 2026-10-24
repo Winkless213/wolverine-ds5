@@ -163,6 +163,13 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 
 安装与重启状态见项目 `work/rea-evidence/usbip-installation.json`、`usbip-installed-state.json`；首次失败保留在 `usbip-windows-mount-20261011-075453.json`，重启后挂载通过为 `usbip-windows-mount-20261011-080210.json`。游戏前一轮录制及复核为 `usbip-windows-mount-20261011-080502.json`、`20261011-160504-408605-capture-review.json`。旧 ZIP 与 manifest 仍是此前快照。
 
+**Wolverine DS5 · 2026-10-24（安装器自动补全依赖）**
+
+- USBip-win2 或 HidHide 缺失时，安装器询问后以管理员身份运行 `tools/install-dependencies.ps1`（一次 UAC）：优先 winget 静默安装（`vadimgrn.usbip-win2`、`Nefarius.HidHide`），失败回退官方安装包并按脚本内固定 SHA256 校验；安装后复检文件与驱动服务，结果写入 `%TEMP%\WolverineDS5-deps-result.txt`，安装器读取后仍缺失的项给出手动下载地址。
+- 雷云 Synapse 官方是联网引导安装器、必须登录账号，无法无人值守完成，仍只提示并打开下载页。
+- 静默安装（`WizardSilent`）跳过依赖对话框，避免无人值守时卡在 UAC 或弹窗。
+- 验证：Windows PowerShell 5.1 下 `-CheckOnly` 检测三项均 present；安装目录内脚本可运行；1.0.2 静默安装、自检、卸载均 exit 0；回退安装包 URL 与硬编码哈希一致。自动安装路径尚未在"依赖真缺失"的机器上实测，winget 提权行为和 HidHide 重启要求待真机确认。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。
