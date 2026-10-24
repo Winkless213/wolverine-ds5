@@ -170,6 +170,14 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 静默安装（`WizardSilent`）跳过依赖对话框，避免无人值守时卡在 UAC 或弹窗。
 - 验证：Windows PowerShell 5.1 下 `-CheckOnly` 检测三项均 present；安装目录内脚本可运行；1.0.2 静默安装、自检、卸载均 exit 0；回退安装包 URL 与硬编码哈希一致。自动安装路径尚未在"依赖真缺失"的机器上实测，winget 提权行为和 HidHide 重启要求待真机确认。
 
+**Wolverine DS5 · 2026-10-24（1.0.3：依赖改为固定版本安装）**
+
+- 复核 1.0.2 的自动安装路径时发现：winget 清单里的 USBip 只有 0.9.7.8，回退安装包也取自同一清单；官方发布说明写明 0.9.7.8 可能内存损坏导致蓝屏，0.9.8.0 修复。本机自 10-12 起运行 0.9.8.0（卸载项 InstallDate 20261012，OSSign 签名，与上游 v.0.9.8.0 同为提交 `83bd1f78`），此后的实测都基于该版本；10-14 依赖清单里写的 0.9.8.1 应为 0.9.8.0。
+- 依赖改为直接下载固定版本的官方安装包（USBip 0.9.8.0、HidHide 1.5.230），校验 SHA256 后静默安装，不再调用 winget。两者在 winget 里的下载源本来就是 GitHub，去掉 winget 不影响网络可达性。
+- 安装器经 `ShellExec` 拉起的是 32 位 PowerShell（Inno 探针实测 `[IntPtr]::Size` 为 4），`$env:ProgramFiles` 指向 `Program Files (x86)`，原路径检测始终落空、只靠服务检测兜住；改用 `ProgramW6432`。原 winget 调用在 PS 5.1 `Stop` 模式下 `2>&1` 遇到 stderr 会直接抛异常、跳过回退安装，随 winget 一并移除。
+- 下载前启用 TLS 1.2 并关闭进度条；自动安装成功后由 `NeedRestart` 在完成页要求重启。UAC 被取消时 `ShellExec` 返回 False 而不抛异常，原 `try/except` 里的提示不会出现，改为按返回值提示。
+- 验证：32 位 PowerShell 下的桩测试 14 项通过（路径检测、两个固定安装包真实下载与哈希、安装参数、哈希不符不执行安装、返回值为单一字符串）；脚本 `-CheckOnly` 在 32/64 位下均为 present；非管理员令牌（`runas /trustlevel:0x20000`）运行 `-AutoInstall` 返回 `error=elevation`；1.0.3 静默安装 exit 0、安装目录内脚本与仓库一致、自检 OK、静默卸载干净。依赖真缺失时的交互流程（询问 → UAC → 安装 → 复检 → 完成页重启）仍未在干净机器上实测。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。

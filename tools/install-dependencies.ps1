@@ -10,7 +10,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $logPath = Join-Path $env:TEMP 'WolverineDS5-deps.log'
+# 安装器拉起的是 32 位 PowerShell，$env:ProgramFiles 会指向 Program Files (x86)。
+$programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
 
 function Write-Log {
     param([string]$Message)
@@ -18,27 +22,26 @@ function Write-Log {
     Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
 }
 
-# 官方安装包与哈希：winget 不可用时的回退路径。升级依赖时同步更新这里。
+# 固定为实测过的官方安装包并校验哈希，升级依赖时同步更新这里。
+# 不用 winget：它只提供 USBip 0.9.7.8，官方说明该版本有内存损坏和蓝屏问题，0.9.8.0 修复。
 $Usbip = @{
-    WingetId = 'vadimgrn.usbip-win2'
-    Url      = 'https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.8/USBip-0.9.7.8-x64.exe'
-    Sha256   = '44451fe06f4186125c2a5ecd25b099c5560a61a60b1e56f5a0758e77a60afa44'
-    Args     = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+    Url    = 'https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.8.0/USBip-0.9.8.0-x64.exe'
+    Sha256 = '81f426741f7ee2ed991febe24a22daca8400b6ae2f171054e3fb404897e15d39'
+    Args   = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
 }
 $HidHide = @{
-    WingetId = 'Nefarius.HidHide'
-    Url      = 'https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe'
-    Sha256   = 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6'
-    Args     = '/exenoui', '/qn', '/norestart'
+    Url    = 'https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe'
+    Sha256 = 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6'
+    Args   = '/exenoui', '/qn', '/norestart'
 }
 
 function Test-Usbip {
-    if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'USBip\usbip.exe')) { return $true }
+    if (Test-Path -LiteralPath (Join-Path $programFiles 'USBip\usbip.exe')) { return $true }
     return [bool](Get-Service -Name 'usbip2_ude' -ErrorAction SilentlyContinue)
 }
 
 function Test-HidHide {
-    if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Nefarius Software Solutions\HidHide\x64\HidHideClient.exe')) { return $true }
+    if (Test-Path -LiteralPath (Join-Path $programFiles 'Nefarius Software Solutions\HidHide\x64\HidHideClient.exe')) { return $true }
     return [bool](Get-Service -Name 'HidHide' -ErrorAction SilentlyContinue)
 }
 
@@ -50,17 +53,7 @@ function Test-Synapse {
     foreach ($link in $links) {
         if (Test-Path -LiteralPath $link) { return $true }
     }
-    return Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Razer\RazerAppEngine\RazerAppEngine.exe')
-}
-
-function Invoke-WingetInstall {
-    param([string]$Id)
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) { return $false }
-    Write-Log "winget install $Id"
-    & $winget.Source install --id $Id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity 2>&1 |
-        ForEach-Object { Write-Log "winget: $_" }
-    return $LASTEXITCODE -eq 0
+    return Test-Path -LiteralPath (Join-Path $programFiles 'Razer\RazerAppEngine\RazerAppEngine.exe')
 }
 
 function Invoke-DownloadInstall {
@@ -74,7 +67,6 @@ function Invoke-DownloadInstall {
     }
     $proc = Start-Process -FilePath $file -ArgumentList $Spec.Args -Wait -PassThru
     Write-Log "$Name installer exit=$($proc.ExitCode)"
-    return $proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010
 }
 
 function Install-Dependency {
@@ -87,17 +79,11 @@ function Install-Dependency {
         Write-Log "$Name missing, install not requested"
         return 'missing'
     }
-    $ok = $false
     try {
-        $ok = Invoke-WingetInstall -Id $Spec.WingetId
-        if (-not $ok -or -not (& $Check)) {
-            Write-Log "$Name winget path failed, falling back to official installer"
-            $ok = Invoke-DownloadInstall -Spec $Spec -Name $Name
-        }
+        Invoke-DownloadInstall -Spec $Spec -Name $Name
     }
     catch {
         Write-Log "$Name install error: $_"
-        $ok = $false
     }
     Start-Sleep -Seconds 3
     if (& $Check) {
@@ -128,12 +114,6 @@ if (-not $CheckOnly -and $AutoInstall) {
 
 $lines.Add('usbip=' + (Install-Dependency -Spec $Usbip -Name 'USBip-win2' -Check ${function:Test-Usbip}))
 $lines.Add('hidhide=' + (Install-Dependency -Spec $HidHide -Name 'HidHide' -Check ${function:Test-HidHide}))
-
-# HidHide 装好但驱动服务没起来，通常要重启才生效。
-$hidhideState = ($lines | Where-Object { $_ -like 'hidhide=*' }) -replace '^hidhide=', ''
-if ($hidhideState -eq 'installed' -and -not (Get-Service -Name 'HidHide' -ErrorAction SilentlyContinue)) {
-    Write-Log 'HidHide installed but service not running yet, reboot required'
-}
 
 $lines.Add('synapse=' + (Get-SynapseResult))
 

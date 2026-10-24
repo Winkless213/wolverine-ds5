@@ -20,12 +20,12 @@
 ## 环境要求与安装
 
 - Windows 10/11。
-- 已安装 [USBip-win2](https://github.com/vadimgrn/usbip-win2)、[HidHide](https://github.com/nefarius/HidHide) 和雷蛇 Synapse。安装器会检测这三项：USBip 和 HidHide 缺失时可在安装向导里选择自动安装（需要管理员权限与联网，HidHide 装好后可能要重启一次）；雷云需要登录账号，安装器只打开下载页。
+- 已安装 [USBip-win2](https://github.com/vadimgrn/usbip-win2)、[HidHide](https://github.com/nefarius/HidHide) 和雷蛇 Synapse。安装器会检测这三项：USBip 和 HidHide 缺失时可在安装向导里选择自动安装（需要管理员权限与联网，固定安装官方 USBip 0.9.8.0 与 HidHide 1.5.230，装好后需重启一次）；雷云需要登录账号，安装器只打开下载页。已装 USBip 0.9.7.8 的请升级到 0.9.8.0：官方说明 0.9.7.8 可能内存损坏导致蓝屏。
 - PC 模式从 Synapse 安装目录加载 HAR 与 Provider，本仓库不包含也不分发雷蛇文件。
 
 ### 安装包
 
-从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.2.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖；USBip 或 HidHide 缺失时可一键自动安装并复检，也可以之后以管理员身份重跑安装目录下的 `tools\install-dependencies.ps1`。
+从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.3.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖；USBip 或 HidHide 缺失时可一键自动安装并复检，也可以之后以管理员身份重跑安装目录下的 `tools\install-dependencies.ps1`。
 
 ### 从源码运行
 

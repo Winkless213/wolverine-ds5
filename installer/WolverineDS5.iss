@@ -3,7 +3,7 @@
 ;   ISCC.exe installer\WolverineDS5.iss
 
 #define AppName "Wolverine DS5"
-#define AppVersion "1.0.2"
+#define AppVersion "1.0.3"
 #define AppPublisher "Winkless213"
 #define AppURL "https://github.com/Winkless213/wolverine-ds5"
 #define AppExe "WolverineDS5.exe"
@@ -18,7 +18,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-VersionInfoVersion=1.0.2.0
+VersionInfoVersion=1.0.3.0
 VersionInfoDescription={#AppName} installer
 VersionInfoProductName={#AppName}
 DefaultDirName={localappdata}\Programs\{#AppName}
@@ -66,10 +66,17 @@ Filename: "{app}\{#AppExe}"; Description: "启动 {#AppName}"; Flags: nowait pos
 [Code]
 var
   SelfTestPassed: Boolean;
+  DepsInstalled: Boolean;
 
 function ShouldLaunchApp: Boolean;
 begin
   Result := SelfTestPassed;
+end;
+
+// USBip 和 HidHide 的驱动装完都要重启才生效，完成页据此要求重启。
+function NeedRestart: Boolean;
+begin
+  Result := DepsInstalled;
 end;
 
 function RuntimeFilesPresent: Boolean;
@@ -148,7 +155,7 @@ begin
     if MsgBox('Wolverine DS5 需要以下系统组件，当前未检测到：' + #13#10 + Details +
               '' + #13#10 + #13#10 +
               '是否现在自动安装？需要管理员权限（会弹一次 UAC），安装过程需要联网；' +
-              'HidHide 装好后可能需要重启一次。',
+              '装好后需要重启一次才能使用。',
               mbConfirmation, MB_YESNO) = IDYES then
     begin
       ResultFile := ExpandConstant('{tmp}\WolverineDS5-deps-result.txt');
@@ -156,21 +163,21 @@ begin
       Params := '-NoProfile -ExecutionPolicy Bypass -File "' +
                 ExpandConstant('{app}\tools\install-dependencies.ps1') + '" -ResultPath "' +
                 ResultFile + '" -AutoInstall';
-      try
-        if ShellExec('runas', 'powershell.exe', Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+      // UAC 被取消时 ShellExec 返回 False，不会抛异常。
+      if ShellExec('runas', 'powershell.exe', Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+      begin
+        if LoadStringFromFile(ResultFile, S) then
         begin
-          if LoadStringFromFile(ResultFile, S) then
-          begin
-            if (StateOf(S, 'usbip') = 'failed') or (StateOf(S, 'hidhide') = 'failed') then
-              MsgBox('自动安装未全部成功。请按下面的地址手动安装后重新打开 Wolverine DS5。',
-                     mbError, MB_OK);
-          end;
+          DepsInstalled := (StateOf(S, 'usbip') = 'installed') or (StateOf(S, 'hidhide') = 'installed');
+          if (StateOf(S, 'usbip') = 'failed') or (StateOf(S, 'hidhide') = 'failed') then
+            MsgBox('自动安装未全部成功。请按下面的地址手动安装后重新打开 Wolverine DS5。',
+                   mbError, MB_OK);
         end;
-      except
+      end
+      else
         MsgBox('未能以管理员身份启动自动安装（UAC 被取消或提权失败）。' + #13#10 +
                '可以右键以管理员身份运行安装目录下的 tools\install-dependencies.ps1，' +
                '或按下面的地址手动安装。', mbInformation, MB_OK);
-      end;
     end;
   end;
 
