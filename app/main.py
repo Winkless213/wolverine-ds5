@@ -644,7 +644,12 @@ def self_test():
             report.append(f"{name}={present}")
         # 桥接链路的第三方依赖（如 cryptography）必须随包，缺了 Xbox/GIP 路线会在运行时才炸。
         import pc_bridge  # noqa: F401
-        report.append("bridge_import=ok")
+        import gip_bridge  # noqa: F401
+        import libusb_package
+        libusb_dll = libusb_package.get_library_path()
+        libusb_ok = libusb_dll is not None and pathlib.Path(libusb_dll).exists()
+        report.append(f"bridge_import=ok libusb_package_dll={libusb_ok}")
+        ok = ok and libusb_ok
         report.append(f"python={sys.version.split()[0]} numpy={numpy.__version__}")
     except Exception:
         ok = False

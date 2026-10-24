@@ -45,7 +45,11 @@ def module_path(source, name):
 
 
 def compiled(source, name, code):
-    return code == compile(module_path(source, name).read_text(encoding="utf-8"), code.co_filename, "exec",
+    path = module_path(source, name)
+    if not path.exists():
+        # 第三方包没有仓库源码可比对，只要它能被加载即可。
+        return True
+    return code == compile(path.read_text(encoding="utf-8"), code.co_filename, "exec",
                            dont_inherit=True)
 
 

@@ -26,7 +26,7 @@ def version_info(description):
     ])
 
 
-datas = collect_data_files("qfluentwidgets") + [
+datas = collect_data_files("qfluentwidgets") + collect_data_files("libusb_package") + [
     ("wolverine-capture.exe", "."),
     ("SDL3.dll", "."),
     ("xbox-sensa-device.json", "."),
@@ -43,7 +43,11 @@ common = dict(pathex=["."], datas=datas, excludes=[
 ])
 
 app = Analysis(["app/main.py"], **common)
-bridge = Analysis(["bridge_main.py"], hiddenimports=["pc_bridge", "pycaw.pycaw", "pycaw.constants"], **common)
+bridge = Analysis(["bridge_main.py"], hiddenimports=[
+    "pc_bridge", "pycaw.pycaw", "pycaw.constants",
+    # gip_host 在运行时才 import libusb_package/usb，PyInstaller 需要显式收集。
+    "usb", "usb.core", "usb.util", "usb.backend.libusb1", "libusb_package",
+], **common)
 MERGE((app, "WolverineDS5", "WolverineDS5"), (bridge, "WolverineDS5-bridge", "WolverineDS5-bridge"))
 
 app_exe = EXE(PYZ(app.pure), app.scripts, [], exclude_binaries=True, name="WolverineDS5", console=False,
