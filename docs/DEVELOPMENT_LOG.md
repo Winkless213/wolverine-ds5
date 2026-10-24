@@ -201,6 +201,18 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 说明：Xbox 模式最终输出仍是 XUSB 9 字节报文，每个马达只有强度字节，没有频率信息，因此柔和握把的频率压低部分不会体现在硬件上，只保留高频能量的振幅衰减；对称/非对称差异也来源于此——PC 的 Sensa 帧可以携带左右独立频带，XUSB 只能发四个独立强度。
 - 验证：`test_xusb_bridge.py` 新增 `test_soft_mode_uses_envelope_converter_with_soft_flag`、`test_set_soft_switches_converter_at_runtime`；`test_xusb_bridge.py`、`test_gip_bridge.py`、`app/test_app.py` 共 96 项通过。
 
+**Wolverine DS5 · 2026-10-24（Xbox 模式默认改用包络映射）**
+
+- 原 Xbox 模式默认用 `PcmToSensa`（主频映射），左右声道各抓一个主导频率，幅度忽高忽低且常不对称，真机手感明显劣于 PC 模式。
+- 现将 [xusb_bridge.py](xusb_bridge.py) 的默认转换器改为 `EnvelopeToSensa`（与 PC 模式同一包络算法），`grip_soft` 只在其上叠加高频加权；扳机马达仍由扳机效果映射独立驱动，不经过该转换器，因此不受影响。
+- 验证：`test_xusb_bridge.py`/`test_gip_bridge.py`/`test_pc_bridge.py` 共 83 项通过；线下对比工具显示包络映射左右一致性不低于主频映射、包络相关性相当。真机手感待确认。
+
+**Wolverine DS5 · 2026-10-24（修复 XUSB 马达量程被压死）**
+
+- [xusb_output.py](xusb_output.py) 的 `build_report` 原先把马达字节按 `value*100` 且上限 `.25` 发送，最大只到 25；对照 X1nput 参考实现（`*255`）与 XInput 惯例，马达字节应为 0–255 全量程。旧代码把动态范围压到约 10%，是 Xbox 模式"又弱又没层次"的首要原因。
+- 修复：马达字节改为 `round(value*255)`，校验范围放宽到 0..1；新增满量程断言。扳机与握把四通道位置不变。
+- 验证：`test_xusb_output.py` 等 100 项通过。真机强度/层次待确认；若全量程过强可再引入用户可调上限。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。

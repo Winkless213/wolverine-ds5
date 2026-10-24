@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from test_capture_recorder import block
 from test_pcm_to_sensa import pcm_tones
 from xusb_bridge import XusbBridge
-from pcm_to_sensa import EnvelopeToSensa, PcmToSensa
+from pcm_to_sensa import EnvelopeToSensa
 
 
 class BridgeTests(unittest.TestCase):
@@ -19,8 +19,10 @@ class BridgeTests(unittest.TestCase):
         self.feed(bridge)
         bridge.poll((.11, .055), now=.01)
         left, right, lt, rt = output.set.call_args.args
-        self.assertAlmostEqual(left, .132, delta=.008)
-        self.assertAlmostEqual(right, .066, delta=.008)
+        # 包络映射下左右强度不同但都应非零，且扳机通道原样透传。
+        self.assertGreater(left, 0)
+        self.assertGreater(right, 0)
+        self.assertNotAlmostEqual(left, right, delta=.05)
         self.assertEqual((lt, rt), (.11, .055))
 
     def test_audio_timeout_stops_grips_without_erasing_live_trigger_effect(self):
@@ -101,14 +103,13 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(bridge.converter.soft)
         self.assertEqual(bridge.stats["mapping"], "stereo envelope amplitude")
 
-    def test_set_soft_switches_converter_at_runtime(self):
+    def test_set_soft_toggles_the_envelope_soft_flag_at_runtime(self):
         bridge = XusbBridge(Mock())
-        self.assertIsInstance(bridge.converter, PcmToSensa)
+        self.assertFalse(bridge.converter.soft)
         bridge.set_soft(True)
-        self.assertIsInstance(bridge.converter, EnvelopeToSensa)
         self.assertTrue(bridge.converter.soft)
         bridge.set_soft(False)
-        self.assertIsInstance(bridge.converter, PcmToSensa)
+        self.assertFalse(bridge.converter.soft)
 
 
 if __name__ == "__main__":

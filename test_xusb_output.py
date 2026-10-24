@@ -6,16 +6,20 @@ from xusb_output import XusbOutput, build_report
 
 class ReportTests(unittest.TestCase):
     def test_four_channels_use_independent_protocol_positions(self):
-        self.assertEqual(build_report(.22, 0, 0, 0).hex(), "030f000016000a0002")
-        self.assertEqual(build_report(0, .22, 0, 0).hex(), "030f000000160a0002")
-        self.assertEqual(build_report(0, 0, .22, 0).hex(), "030f160000000a0002")
-        self.assertEqual(build_report(0, 0, 0, .22).hex(), "030f001600000a0002")
+        # 马达字节按 0-255 全量程：.22 -> round(.22*255) = 56 = 0x38
+        self.assertEqual(build_report(.22, 0, 0, 0).hex(), "030f000038000a0002")
+        self.assertEqual(build_report(0, .22, 0, 0).hex(), "030f000000380a0002")
+        self.assertEqual(build_report(0, 0, .22, 0).hex(), "030f380000000a0002")
+        self.assertEqual(build_report(0, 0, 0, .22).hex(), "030f003800000a0002")
+
+    def test_full_scale_reaches_the_protocol_maximum(self):
+        self.assertEqual(build_report(1, 1, 1, 1).hex(), "030fffffffff0a0002")
 
     def test_stop_clears_every_motor_and_pulse_field(self):
         self.assertEqual(build_report(0, 0, 0, 0), bytes.fromhex("030f00000000000000"))
 
     def test_invalid_amplitude_never_becomes_a_packet(self):
-        for value in (-.1, .251, float("nan"), float("inf")):
+        for value in (-.1, 1.001, float("nan"), float("inf")):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 build_report(value, 0, 0, 0)
 

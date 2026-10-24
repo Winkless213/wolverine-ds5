@@ -119,11 +119,12 @@ class XusbApi:
 
 def build_report(left, right, lt, rt):
     values = (lt, rt, left, right)
-    if any(not 0 <= value <= .25 for value in values):
-        raise ValueError("Bench amplitudes must stay within 0..0.25")
+    if any(not 0 <= value <= 1 for value in values):
+        raise ValueError("Amplitudes must stay within 0..1")
+    # 马达字节按 XInput/XUSB 惯例取 0-255 全量程（对照 X1nput 的 *255）；
     # 避免现成持续报文中的 FF/EB 长循环；每次只发 100ms 短脉冲和 2 次循环。
     timing = (10, 0, 2) if any(values) else (0, 0, 0)
-    return bytes((3, 15, *(round(value * 100) for value in values), *timing))
+    return bytes((3, 15, *(round(value * 255) for value in values), *timing))
 
 
 class XusbTransport(XusbApi):
