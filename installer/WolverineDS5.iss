@@ -3,11 +3,13 @@
 ;   ISCC.exe installer\WolverineDS5.iss
 
 #define AppName "Wolverine DS5"
-#define AppVersion "1.0.3"
+#define AppVersion "1.0.4"
 #define AppPublisher "Winkless213"
 #define AppURL "https://github.com/Winkless213/wolverine-ds5"
 #define AppExe "WolverineDS5.exe"
 #define AppSrc "..\dist\WolverineDS5"
+; 已装 USBip 低于此版本时提示升级，tools\install-dependencies.ps1 的 $UsbipMinVersion 要保持一致。
+#define UsbipMinVersion "0.9.8.0"
 
 [Setup]
 AppId={{7C4F53A6-6B31-4E4C-8E27-19D0B5A62D1F}
@@ -18,7 +20,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-VersionInfoVersion=1.0.3.0
+VersionInfoVersion=1.0.4.0
 VersionInfoDescription={#AppName} installer
 VersionInfoProductName={#AppName}
 DefaultDirName={localappdata}\Programs\{#AppName}
@@ -94,6 +96,19 @@ begin
     FileExists(ExpandConstant('{pf32}\USBip\usbip.exe'));
 end;
 
+// 官方说明 0.9.7.8 可能内存损坏导致蓝屏，0.9.8.0 修复并推荐升级；本程序按 0.9.8.0 实测，低于它的都提示升级。
+// 版本号取自 usbip.exe（上游安装包的版本号也取自它）；读不到时不拦，按已安装处理。
+function UsbipOutdated(var Version: String): Boolean;
+var
+  Installed, Minimum: Int64;
+begin
+  Result := False;
+  if not GetVersionNumbersString(ExpandConstant('{pf}\USBip\usbip.exe'), Version) then
+    Exit;
+  if StrToVersion(Version, Installed) and StrToVersion('{#UsbipMinVersion}', Minimum) then
+    Result := ComparePackedVersion(Installed, Minimum) < 0;
+end;
+
 function HidHidePresent: Boolean;
 begin
   Result :=
@@ -134,25 +149,28 @@ begin
   ShellExec('', 'https://www.razer.com/synapse-4', '', '', SW_SHOW, ewNoWait, ResultCode);
 end;
 
-// 缺失的 USBip/HidHide 可在用户确认后自动静默安装并复检；雷云必须登录，只打开下载页。
+// 缺失或版本过旧的 USBip/HidHide 可在用户确认后自动静默安装并复检；雷云必须登录，只打开下载页。
 procedure CheckAndFixDependencies;
 var
-  Details, Params, ResultFile: String;
+  Details, Params, ResultFile, UsbipVersion: String;
   S: AnsiString;
   ResultCode: Integer;
 begin
   if WizardSilent then
     Exit;
 
-  if (not UsbipPresent) or (not HidHidePresent) then
+  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or (not HidHidePresent) then
   begin
     Details := '';
     if not UsbipPresent then
-      Details := Details + #13#10 + '  USBip-win2';
+      Details := Details + #13#10 + '  USBip-win2：未检测到'
+    else if UsbipOutdated(UsbipVersion) then
+      Details := Details + #13#10 + '  USBip-win2：当前 ' + UsbipVersion +
+                 '，需要升级到 {#UsbipMinVersion}（官方推荐版本，修复了 0.9.7.8 的蓝屏问题）';
     if not HidHidePresent then
-      Details := Details + #13#10 + '  HidHide';
+      Details := Details + #13#10 + '  HidHide：未检测到';
 
-    if MsgBox('Wolverine DS5 需要以下系统组件，当前未检测到：' + #13#10 + Details +
+    if MsgBox('Wolverine DS5 需要以下系统组件：' + #13#10 + Details +
               '' + #13#10 + #13#10 +
               '是否现在自动安装？需要管理员权限（会弹一次 UAC），安装过程需要联网；' +
               '装好后需要重启一次才能使用。',
@@ -176,19 +194,21 @@ begin
       end
       else
         MsgBox('未能以管理员身份启动自动安装（UAC 被取消或提权失败）。' + #13#10 +
-               '可以右键以管理员身份运行安装目录下的 tools\install-dependencies.ps1，' +
-               '或按下面的地址手动安装。', mbInformation, MB_OK);
+               '可以重新运行安装包再选自动安装，或按下面的地址手动安装。', mbInformation, MB_OK);
     end;
   end;
 
-  if (not UsbipPresent) or (not HidHidePresent) then
+  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or (not HidHidePresent) then
   begin
     Details := '';
     if not UsbipPresent then
-      Details := Details + '  USBip-win2：https://github.com/vadimgrn/usbip-win2' + #13#10;
+      Details := Details + '  USBip-win2：https://github.com/vadimgrn/usbip-win2' + #13#10
+    else if UsbipOutdated(UsbipVersion) then
+      Details := Details + '  USBip-win2 {#UsbipMinVersion}：' +
+                 'https://github.com/vadimgrn/usbip-win2/releases/tag/v.{#UsbipMinVersion}' + #13#10;
     if not HidHidePresent then
       Details := Details + '  HidHide：https://github.com/nefarius/HidHide' + #13#10;
-    MsgBox('以下组件仍缺失，装好后再打开 Wolverine DS5：' + #13#10#13#10 + Details,
+    MsgBox('以下组件仍缺失或版本过旧，装好后再打开 Wolverine DS5：' + #13#10#13#10 + Details,
            mbInformation, MB_OK);
   end;
 

@@ -178,6 +178,13 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 下载前启用 TLS 1.2 并关闭进度条；自动安装成功后由 `NeedRestart` 在完成页要求重启。UAC 被取消时 `ShellExec` 返回 False 而不抛异常，原 `try/except` 里的提示不会出现，改为按返回值提示。
 - 验证：32 位 PowerShell 下的桩测试 14 项通过（路径检测、两个固定安装包真实下载与哈希、安装参数、哈希不符不执行安装、返回值为单一字符串）；脚本 `-CheckOnly` 在 32/64 位下均为 present；非管理员令牌（`runas /trustlevel:0x20000`）运行 `-AutoInstall` 返回 `error=elevation`；1.0.3 静默安装 exit 0、安装目录内脚本与仓库一致、自检 OK、静默卸载干净。依赖真缺失时的交互流程（询问 → UAC → 安装 → 复检 → 完成页重启）仍未在干净机器上实测。
 
+**Wolverine DS5 · 2026-10-24（1.0.4：检测已装 USBip 版本）**
+
+- 安装器与 `tools/install-dependencies.ps1` 读取 `Program Files\USBip\usbip.exe` 的文件版本（上游安装包的版本号即取自该文件），低于 0.9.8.0 视为过旧：向导在依赖对话框里列出当前版本并询问是否自动升级；脚本结果为 `usbip=outdated`，带 `-AutoInstall` 时下载同一固定安装包覆盖安装，复检版本达标才记为 `installed`。读不到版本号时按已安装处理。最低版本在 `WolverineDS5.iss` 的 `UsbipMinVersion` 与脚本的 `$UsbipMinVersion` 各定义一次，需同步修改。
+- 覆盖升级靠上游安装包自动卸载旧版：0.9.5.0 起各版 AppId 相同（`{199505b0-…}`），固定的 0.9.8.0 安装包在安装前经 UninsIS 以 `/SILENT /SUPPRESSMSGBOXES /NORESTART` 卸载旧版；0.9.3.x 的 AppId 不同，不在此列。
+- UAC 被取消时原提示「右键以管理员身份运行 `tools\install-dependencies.ps1`」走不通：.ps1 右键菜单没有以管理员身份运行，且不带 `-AutoInstall` 只检测不安装。改为提示重新运行安装包，README 同步。
+- 验证：32 位 PowerShell 下桩测试 26 项通过（新增：以低版本 PE 文件冒充 `usbip.exe` 时判为过旧、未要求安装时返回 `outdated`、升级后复检达标为 `installed`、升级后版本仍旧为 `failed`、缺失时的全新安装路径不变）；由真实 `[Code]` 生成的 Inno 探针（只替换 MsgBox、ShellExec 和 Program Files 路径）跑 7 种场景，对话框文字、提权参数与完成页重启判断符合预期；Inno 版本比较 0.9.7.8、0.9.7.99 低于 0.9.8.0，0.9.8.1、0.9.10.0、1.0.0.0 不低于；1.0.4 静默安装 exit 0、安装目录内脚本与仓库一致、自检 OK、`-CheckOnly` 为 present、静默卸载干净。真实的 0.9.7.8 → 0.9.8.0 升级未实测：不在本机安装已知有蓝屏问题的版本。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。

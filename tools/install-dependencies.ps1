@@ -34,10 +34,23 @@ $HidHide = @{
     Sha256 = 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6'
     Args   = '/exenoui', '/qn', '/norestart'
 }
+# 已装 USBip 低于这个版本时按需要升级处理，安装器 WolverineDS5.iss 的 UsbipMinVersion 要保持一致。
+$UsbipMinVersion = [version]'0.9.8.0'
 
 function Test-Usbip {
     if (Test-Path -LiteralPath (Join-Path $programFiles 'USBip\usbip.exe')) { return $true }
     return [bool](Get-Service -Name 'usbip2_ude' -ErrorAction SilentlyContinue)
+}
+
+# 版本号取自 usbip.exe（上游安装包的版本号也取自它）；读不到时不拦，按已安装处理。
+function Test-UsbipOutdated {
+    $exe = Join-Path $programFiles 'USBip\usbip.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    $info = (Get-Item -LiteralPath $exe).VersionInfo
+    if (-not $info.FileVersion) { return $false }
+    $version = New-Object Version $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart
+    Write-Log "USBip-win2 version $version"
+    return $version -lt $UsbipMinVersion
 }
 
 function Test-HidHide {
@@ -70,14 +83,15 @@ function Invoke-DownloadInstall {
 }
 
 function Install-Dependency {
-    param($Spec, [string]$Name, [scriptblock]$Check)
-    if (& $Check) {
+    param($Spec, [string]$Name, [scriptblock]$Check, [scriptblock]$Outdated = { $false })
+    $state = if (-not (& $Check)) { 'missing' } elseif (& $Outdated) { 'outdated' } else { 'present' }
+    if ($state -eq 'present') {
         Write-Log "$Name already present"
         return 'present'
     }
     if (-not $AutoInstall) {
-        Write-Log "$Name missing, install not requested"
-        return 'missing'
+        Write-Log "$Name $state, install not requested"
+        return $state
     }
     try {
         Invoke-DownloadInstall -Spec $Spec -Name $Name
@@ -86,11 +100,11 @@ function Install-Dependency {
         Write-Log "$Name install error: $_"
     }
     Start-Sleep -Seconds 3
-    if (& $Check) {
+    if ((& $Check) -and -not (& $Outdated)) {
         Write-Log "$Name installed"
         return 'installed'
     }
-    Write-Log "$Name still missing after install"
+    Write-Log "$Name still $state after install"
     return 'failed'
 }
 
@@ -112,7 +126,7 @@ if (-not $CheckOnly -and $AutoInstall) {
     }
 }
 
-$lines.Add('usbip=' + (Install-Dependency -Spec $Usbip -Name 'USBip-win2' -Check ${function:Test-Usbip}))
+$lines.Add('usbip=' + (Install-Dependency -Spec $Usbip -Name 'USBip-win2' -Check ${function:Test-Usbip} -Outdated ${function:Test-UsbipOutdated}))
 $lines.Add('hidhide=' + (Install-Dependency -Spec $HidHide -Name 'HidHide' -Check ${function:Test-HidHide}))
 
 $lines.Add('synapse=' + (Get-SynapseResult))
@@ -120,6 +134,6 @@ $lines.Add('synapse=' + (Get-SynapseResult))
 $lines -join "`r`n" | Out-File -LiteralPath $ResultPath -Encoding ASCII
 Write-Log ('result: ' + ($lines -join ', '))
 
-$failed = $lines | Where-Object { $_ -match '=(failed|missing)$' }
+$failed = $lines | Where-Object { $_ -match '=(failed|missing|outdated)$' }
 if ($failed) { exit 2 }
 exit 0
