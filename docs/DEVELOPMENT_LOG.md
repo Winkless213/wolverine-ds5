@@ -4,6 +4,15 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（1.1.32 候选包：雷云退出改成手动拉起）**
+
+- 版本 1.1.32，以 `dist/candidate-1.1.31` 为基线旁路构建；允许变化模块 `app/core.py`、`app/main.py`、`app/ui_model.py`、`app/__init__.py`，其余桥接字节码与基线一致，`package-check` `passed=true`（`WolverineDS5.exe` `19c85ed4…`，`WolverineDS5-bridge.exe` `5702d83f…`）。
+- 交付：`dist/Wolverine-DS5-Setup-1.1.32.exe`（59.5 MB，SHA256 `5c798cb07f9e30998dbaa5710c16639c535fca85952d3301b00ece2483b4a9c1`）、`dist/Wolverine-DS5-1.1.32-patch.zip`（13.3 MB，两个 exe + marker + 两个 QML + 覆盖说明）。
+- 真机验证（装好的 1.1.32）：启动时自动拉起雷云一次（14:36:36 开始，14:36:40 `started`，14:36:49 握把就绪）；中途退出雷云 → 14:37:37 `Grips: stopped`，点「启动雷云」→ 14:37:49 `started`、14:38:01 就绪；再退出一次且不点按钮（14:40:01 `Grips: stopped`），之后没有任何新的 `Synapse check started`，`RazerAppEngine` 进程保持 0；再点按钮 → 14:40:57 拉起、14:41:07 就绪。`--self-test` 退出码 0。
+- 观察：这两次由按钮触发的检查在日志里和自动拉起无法区分（都是 `Synapse check started`），下次改日志时补 auto/manual 标记。
+
+---
+
 **Wolverine DS5 · 2026-10-30（雷云退出不再反复拉起，改成提示 + 启动按钮）**
 
 - 现状：只要「PC 模式 + 握把没就绪」，`_probe` 每 2 秒就会走 `_ensure_synapse`（节流 60 秒）——用户主动退出雷云后，程序最多一分钟又把它拉起来，反复不停，等于跟用户对着干。
