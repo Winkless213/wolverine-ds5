@@ -4,6 +4,15 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（1.1.31 候选包：停止桥接让回实体手柄 + 雷云启动校验）**
+
+- 版本 1.1.31，以 `dist/candidate-1.1.30` 为基线旁路构建；允许变化模块 `app/core.py`、`app/main.py`、`app/synapse.py`、`app/__init__.py`，其余桥接字节码与基线一致，`package-check` `passed=true`（`WolverineDS5.exe` `492d8446…`，`WolverineDS5-bridge.exe` `8d759bf3…`）。
+- 候选包继续写入 `_internal/multiband.enabled`；交付 `dist/Wolverine-DS5-Setup-1.1.31.exe`（59.5 MB，SHA256 `a54240d15bfae13c529ade964c89ac1d4e18484dd84bff96792bb9f70cabe14b`）与 `dist/Wolverine-DS5-1.1.31-patch.zip`（13.3 MB，两个 exe + marker + 覆盖说明）。
+- 真机验证（装好的 1.1.31）：启动后雷云被自动拉起并站住（新的 8 秒校验报 `started`）、HidHide 生效、非白名单进程只看得到虚拟 DS5；点「停止桥接」后 `--cloak-off`、隐藏列表 0、非白名单进程改看到 `XInput Controller #1`，`hide_physical` 仍为 true；再点「启动桥接」后 `--cloak-on`、10 个接口重新隐藏、桥接 14:21:19 重新 `connected`。`--self-test` 退出码 0；全仓 412 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题。
+- 安装注意：雷云运行时覆盖安装会中止（exit 5；RestartManager 报告 `RazerAppEngine`/`RzEngineMon.exe` 占用了要替换的文件），先退出雷云再装；README 已补这条。另清理了调试时留在 HidHide 白名单里的 `python.exe`。
+
+---
+
 **Wolverine DS5 · 2026-10-30（停止桥接时把实体手柄让回去）**
 
 - 现象：点「停止桥接」后游戏里一只手柄都没有。原因不是桥接坏了——停止只停桥接，HidHide 仍隐藏着实体手柄（`hide_physical=True`），虚拟 DS5 又已经卸载；只有「退出程序」才走 `restore_native` 解除隐藏（`native-exit.log` 14:10:45「原生恢复完成」，之后 `HidHideCLI --cloak-state` 已是 off，SDL 能看到 `XInput Controller #1`）。

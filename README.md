@@ -25,7 +25,7 @@
 
 ### 安装包
 
-从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.4.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖；USBip 或 HidHide 缺失、USBip 版本过旧时可一键自动安装并复检；当时跳过的话，重新运行安装包会再次检测。
+从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.4.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖；USBip 或 HidHide 缺失、USBip 版本过旧时可一键自动安装并复检；当时跳过的话，重新运行安装包会再次检测。覆盖安装前请先退出雷云：要替换的文件可能被 Razer App Engine 占用，安装程序会因此中止（退出码 5），退出雷云后重装即可。
 
 ### 从源码运行
 
