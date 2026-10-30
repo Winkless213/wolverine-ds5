@@ -4,6 +4,16 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（雷云退出不再反复拉起，改成提示 + 启动按钮）**
+
+- 现状：只要「PC 模式 + 握把没就绪」，`_probe` 每 2 秒就会走 `_ensure_synapse`（节流 60 秒）——用户主动退出雷云后，程序最多一分钟又把它拉起来，反复不停，等于跟用户对着干。
+- 改动：自动拉起只做一次（桥接启动时，`synapse_tried` 记账）；中途雷云退出不再自动重试。改由界面提供入口——状态页「雷蛇 Sensa」行在雷云 `stopped`/`offline` 且桥接运行时显示「启动雷云」按钮（`synapseStartable`），托盘菜单同样加一项；点击走 `_ensure_synapse(manual=True)`，仍用 8 秒存活校验。
+- 提示：先观察到握把就绪（`grips_were_ready`）之后雷云退出，弹一次托盘气泡「雷云已退出 … 点「启动雷云」恢复」，不拦截、不弹模态框；离线提示改成恢复网络后点按钮重开；状态说明改成「输入正常；点「启动雷云」恢复握把震动」。
+- 测试：新增「自动只拉起一次、之后不重试」「按钮只在雷云 stopped/offline 时出现」「中途退出只提示一次且不重启雷云」；`app/test_app.py` + `app/test_core.py` 89 项通过，全仓 414 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题。UI 截图：`output/frontend-qa/status-synapse-stopped-v1.png`（980）与 `status-synapse-stopped-wide-v1.png`（1180）。
+- 未打包：随下次构建发布。
+
+---
+
 **Wolverine DS5 · 2026-10-30（1.1.31 候选包：停止桥接让回实体手柄 + 雷云启动校验）**
 
 - 版本 1.1.31，以 `dist/candidate-1.1.30` 为基线旁路构建；允许变化模块 `app/core.py`、`app/main.py`、`app/synapse.py`、`app/__init__.py`，其余桥接字节码与基线一致，`package-check` `passed=true`（`WolverineDS5.exe` `492d8446…`，`WolverineDS5-bridge.exe` `8d759bf3…`）。

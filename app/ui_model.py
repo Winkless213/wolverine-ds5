@@ -30,6 +30,7 @@ class UiModel(QObject):
     testRequested = Signal(object)
     autostartRequested = Signal(bool)
     hideRequested = Signal(bool)
+    synapseRequested = Signal()
     openLogsRequested = Signal()
     exportLogsRequested = Signal()
 
@@ -62,6 +63,7 @@ class UiModel(QObject):
         self._ds5_detail = "usbip · 127.0.0.1:3240"
         self._sensa_state = "未检测"
         self._grip_ready = True
+        self._synapse_startable = False
         self._hide_warning = ""
         self._uptime = ""
         self._log_dir = str(log_dir)
@@ -137,6 +139,10 @@ class UiModel(QObject):
     def gripReady(self):
         # 雷云/Sensa 还没认出握把时，震动测试按下去也不会有输出，界面要如实反映。
         return self._grip_ready
+
+    @Property(bool, notify=systemChanged)
+    def synapseStartable(self):
+        return self._synapse_startable
 
     @Property(str, notify=systemChanged)
     def hideWarning(self):
@@ -244,6 +250,12 @@ class UiModel(QObject):
     def set_grip_ready(self, ready):
         if ready != self._grip_ready:
             self._grip_ready = ready
+            self.systemChanged.emit()
+
+    def set_synapse_startable(self, startable):
+        """雷云没在运行时界面给一个「启动雷云」入口；程序不会自己去反复拉起。"""
+        if startable != self._synapse_startable:
+            self._synapse_startable = startable
             self.systemChanged.emit()
 
     def set_hide_warning(self, warning):
@@ -362,6 +374,11 @@ class UiModel(QObject):
         if not self._testable:
             return
         self.testRequested.emit(None if self._testing == "grip" else "grip")
+
+    @Slot()
+    def requestSynapse(self):
+        if self._synapse_startable:
+            self.synapseRequested.emit()
 
     @Slot()
     def openLogs(self):

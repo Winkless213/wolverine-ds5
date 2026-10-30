@@ -128,6 +128,31 @@ Item {
                         font.weight: Font.DemiBold
                         anchors.verticalCenter: parent.verticalCenter
                     }
+
+                    Rectangle {
+                        visible: appModel.synapseStartable
+                        width: 78
+                        height: 22
+                        radius: 4
+                        color: "#1D1D1D"
+                        border.color: Theme.green
+                        border.width: 1
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "启动雷云"
+                            color: Theme.green
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: appModel.requestSynapse()
+                        }
+                    }
                 }
 
                 Row {

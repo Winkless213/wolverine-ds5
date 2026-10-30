@@ -153,10 +153,10 @@ def describe(running, wanted, status, mode):
     if state == "connected" and status.get("backend") == "sensa":
         if status.get("grips_ready") is False:
             if status.get("synapse") == "offline":
-                return "waiting", "雷云离线，握把不可用", "输入正常；雷云没联网时不会加载手柄。请恢复网络后重启雷云 Synapse"
+                return "waiting", "雷云离线，握把不可用", "输入正常；雷云没联网时不会加载手柄。恢复网络后点「启动雷云」重开"
             if status.get("synapse") == "stopped":
                 # 桥接只能看到共享内存打不开；雷云根本没运行时，"等待识别手柄"会让人以为连接失败。
-                return "waiting", "雷云未运行，握把不可用", "输入正常；程序会尝试打开雷云 Synapse，也可从开始菜单手动启动"
+                return "waiting", "雷云未运行，握把不可用", "输入正常；点「启动雷云」恢复握把震动"
             return "waiting", "等待握把震动服务", "输入正常；正在等待雷云 Synapse 识别手柄，握把暂不可用"
         return "connected", "已连接", "PC 模式：震动经 Sensa 输出到左右握把"
     if state == "connected":

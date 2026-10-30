@@ -132,7 +132,7 @@ class DescribeTests(unittest.TestCase):
         self.assertIn("离线", title)
         self.assertIn("输入正常", detail)
         self.assertIn("网络", detail)
-        self.assertIn("重启雷云", detail)
+        self.assertIn("启动雷云", detail)
 
 
 class ParseLineTests(unittest.TestCase):

@@ -83,10 +83,12 @@ class App(QObject):
         self.connected_at = None
         self.icon_key = self.state_title = None
         self.tray = None
+        self.synapse_action = None
         self.synapse_checking = False
-        self.synapse_next_check = 0
+        self.synapse_tried = False
         self.synapse_result = None
         self.grips_state = None
+        self.grips_were_ready = False
         self.grips_checking = False
         self.grips_next_check = 0
 
@@ -115,6 +117,7 @@ class App(QObject):
         self.model.testRequested.connect(self._test)
         self.model.autostartRequested.connect(self._set_autostart)
         self.model.hideRequested.connect(self._set_hidden)
+        self.model.synapseRequested.connect(self._start_synapse)
         self.model.openLogsRequested.connect(lambda: system.open_folder(str(log_dir)))
         self.model.exportLogsRequested.connect(self.export_logs)
         self.window.shown.connect(self._check_usbip)
@@ -158,7 +161,7 @@ class App(QObject):
             self._refresh()
         if self.mode == "pc" and self.status.get("backend") == "sensa":
             self._check_grips()
-        if self.mode == "pc" and self._grips_ready() is False:
+        if self.mode == "pc" and self._grips_ready() is False and not self.synapse_tried:
             self._ensure_synapse()
 
     def _remind_pc_mode(self):
@@ -212,12 +215,16 @@ class App(QObject):
             self._ensure_synapse()
         self.bridge.start()
 
-    def _ensure_synapse(self):
+    def _ensure_synapse(self, manual=False):
+        # 自动拉起只做一次（桥接启动时）；中途退出雷云不追着重启，改成界面上的「启动雷云」按钮。
         if (self.synapse_checking or self.closing or self.exiting or self.quit_pending or self.paused
-                or not self.wanted or self.mode != "pc" or time.monotonic() < self.synapse_next_check):
+                or not self.wanted or self.mode != "pc"):
             return
+        if not manual and self.synapse_tried:
+            return
+        if not manual:
+            self.synapse_tried = True
         self.synapse_checking = True
-        self.synapse_next_check = time.monotonic() + 60
         self._log_synapse("Synapse check started")
 
         def work():
@@ -231,6 +238,9 @@ class App(QObject):
 
         # 雷云启动慢也不阻塞输入；握把由桥接现有的重连逻辑原地恢复。
         threading.Thread(target=work, daemon=True).start()
+
+    def _start_synapse(self):
+        self._ensure_synapse(manual=True)
 
     def _synapse_done(self, result):
         self.synapse_checking = False
@@ -276,8 +286,13 @@ class App(QObject):
         if result == previous:
             return
         self._log_synapse(f"Grips: {result}")
-        if result == "offline":
-            self.toast("warning", "雷云处于离线模式", "雷云没联网时不会加载手柄，握把不会震。请恢复网络后重启雷云 Synapse")
+        if result == "ready":
+            self.grips_were_ready = True
+        elif result == "offline":
+            self.toast("warning", "雷云处于离线模式", "雷云没联网时不会加载手柄，握把不会震。恢复网络后点「启动雷云」重开")
+        elif result == "stopped" and self.grips_were_ready:
+            # 中途退出雷云：不追着重启，只提示一次，给一个可点的入口。
+            self.toast("warning", "雷云已退出", "握把暂时不可用；点状态页或托盘菜单的「启动雷云」恢复，按键输入不受影响")
         self._refresh()
 
     def _grips_ready(self):
@@ -357,6 +372,11 @@ class App(QObject):
         else:
             self.model.set_sensa("未检测")
             self.model.set_grip_ready(True)
+        # 雷云没在跑（或离线）才给「启动雷云」入口；程序不会自己去反复拉起。
+        self.model.set_synapse_startable(
+            bool(self.mode == "pc" and self.wanted and not self.synapse_checking
+                 and self.status.get("backend") == "sensa"
+                 and self.grips_state in ("stopped", "offline")))
         was_testing = self.model.testing
         self.model.set_testable(connected)
         if not connected and was_testing:
@@ -373,6 +393,8 @@ class App(QObject):
         if self.tray:
             self.toggle_action.setText(action)
             self.toggle_action.setEnabled(not (self.busy or self.exiting) and self.mode is not None)
+            if self.synapse_action is not None:
+                self.synapse_action.setEnabled(self.model.synapseStartable)
         self._tick()
 
     def _tick(self):
@@ -554,8 +576,11 @@ class App(QObject):
         self.tray = QSystemTrayIcon(status_icon("waiting"), self)
         self.menu = SystemTrayMenu()
         self.toggle_action = Action(FluentIcon.SYNC, "停止桥接", triggered=self._toggle)
+        self.synapse_action = Action(FluentIcon.PLAY, "启动雷云", triggered=self._start_synapse)
+        self.synapse_action.setEnabled(False)
         self.menu.addActions([Action(FluentIcon.HOME, "打开主界面", triggered=self.show_window),
                               self.toggle_action,
+                              self.synapse_action,
                               Action(FluentIcon.CLOSE, "退出", triggered=self.quit)])
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._tray_activated)

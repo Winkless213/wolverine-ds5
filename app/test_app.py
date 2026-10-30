@@ -312,22 +312,42 @@ class PcModeTests(unittest.TestCase):
         _, _, system, _ = self.make_app(mode="bridge")
         self.assertEqual(system.synapse_calls, 0)
 
-    def test_sensa_retry_is_throttled_and_does_not_restart_the_virtual_controller(self):
+    def test_synapse_is_started_once_and_never_retried_automatically(self):
+        # 用户主动退出雷云时程序不追着重启；要拉起只能点「启动雷云」。
         app, bridge, system, _ = self.make_app(mode="pc")
         self.assertTrue(wait_for(lambda: system.synapse_calls == 1 and not app.synapse_checking, timeout=1))
         bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": False})
+        app._grips_checked("stopped")
         for _ in range(3):
-            app._probe()
+            app._ensure_synapse()
         self.assertEqual(system.synapse_calls, 1)
-        app.synapse_next_check = 0
-        app._probe()
+        self.assertTrue(app.model.synapseStartable)
+        app.model.requestSynapse()
         self.assertTrue(wait_for(lambda: system.synapse_calls == 2 and not app.synapse_checking, timeout=1))
-        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": True})
-        app.synapse_next_check = 0
-        app._probe()
-        self.assertEqual(system.synapse_calls, 2)
         self.assertEqual(bridge.started, 1)
-        self.assertEqual(app.model.sensaState, "就绪")
+
+    def test_synapse_button_only_shows_once_synapse_is_reported_missing(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        self.assertTrue(wait_for(lambda: system.synapse_calls == 1 and not app.synapse_checking, timeout=1))
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": False})
+        app._grips_checked("ready")
+        self.assertFalse(app.model.synapseStartable)
+        app._grips_checked("stopped")
+        self.assertTrue(app.model.synapseStartable)
+        app._grips_checked("ready")
+        self.assertFalse(app.model.synapseStartable)
+
+    def test_synapse_exiting_mid_session_warns_once_without_restarting_it(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        self.assertTrue(wait_for(lambda: system.synapse_calls == 1 and not app.synapse_checking, timeout=1))
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": False})
+        app._grips_checked("ready")
+        app.toast = Mock()
+        app._grips_checked("stopped")
+        app.toast.assert_called_once()
+        self.assertIn("雷云", app.toast.call_args.args[1])
+        self.assertIn("启动雷云", app.toast.call_args.args[2])
+        self.assertEqual(system.synapse_calls, 1)
 
     def test_failed_synapse_start_warns_instead_of_claiming_success(self):
         app, bridge, _, _ = self.make_app(mode="pc")
