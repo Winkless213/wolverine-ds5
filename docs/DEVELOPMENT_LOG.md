@@ -4,6 +4,26 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（更正：雷云「音频转震动」不影响握把）**
+
+- 起因：README 与安装器写着「必须关闭 Chroma 的音频转震动，否则会和桥接的震动叠加」，但用户一直开着它，历次实机测试都没发现问题。
+- 取证：`%LOCALAPPDATA%\Razer\RazerAppEngine\User Data\Logs\RzAudioCapture.log` 里 `RegisterHapticDataEvent` 确实把手柄登记为目标（`id: 2636-{…}`，bodyparts 216/116），音源是当时的默认输出端点（Shokz 耳机）；`CA2HDevice::Process sample rate changed … now: 48000` 证明放音时它确实初始化并开始处理。
+- 实测：默认输出播放 20 秒 45Hz、0.6 幅度的强低频（1.5Hz 节拍），共两轮——桥接运行时一次，「停止桥接」后一次——用户两次都反馈握把没有震动；两轮期间 HapticService 与 A2H 日志都没有新增处理记录。
+- 结论：该开关只登记了目标设备，没有产生握把输出（大概率只对 Sensa HD 类音频设备生效），所以开不开都不影响 PC 模式桥接。README 与安装器改成软提示，不再要求用户改雷云设置。
+- 顺带：`app/core.py:audio_to_haptics_active()` 读的是 HapticService 里 `Audio2Haptics` 的音量命令行（只在雷云启动时出现），既证明不了「正在输出」，也没有接到界面上；暂留，等清理死代码时一起处理。
+
+---
+
+**Wolverine DS5 · 2026-10-30（雷云启动改成就绪校验）**
+
+- 现象：`app/synapse.py:ensure_running()` 只要 `os.startfile` 成功就返回 `started`，界面随即弹「已启动雷云」；但引擎可能几秒后自己退出，界面随后变成「雷云未运行，握把不可用」，前后矛盾。本轮排查时 13:31 就遇到一次（启动 6 秒后退出）。
+- 改动：拉起后进入 8 秒观察窗口（0.5 秒轮询，连续存活 2 秒才算站住），返回 `running` / `started` / `failed` / `missing`；`app/main.py` 收到 `failed` 时弹「雷云没有启动成功……请从开始菜单手动打开」，不再谎报成功。时钟与等待可注入，测试不真的睡。
+- 测试：`app/test_synapse.py` 新增「一直起不来」「起来 1 秒又退出」「稳定存活」三项；`app/test_app.py` 新增失败提示一项。全仓 408 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题。
+- 背景（本次没改）：排查中 `RazerAppEngine.exe` 从 DSH 的 pwsh 子进程启动时直接退出码 9，`main.log`／`RzEngineMon.log`／WER／CrashDumps 全无痕迹，失败发生在 Electron 初始化之前；同一台机用 Explorer 启动已安装的 1.1.30 时自动拉起雷云正常（13:57:38 `Synapse: started`，12 个进程，13:57:50 `Grips: ready`）。因此判定与启动上下文有关，生产路径不受影响，不再追根因。
+- 未打包：按用户要求随下次打包一起发。
+
+---
+
 **Wolverine DS5 · 2026-10-30（1.1.30 候选包：Xbox 模式提示与切回自动连接）**
 
 - 版本 1.1.30，以 `dist/candidate-1.1.29` 为基线旁路构建；允许变化模块 `app/core.py`、`app/main.py`、`app/__init__.py`，其余桥接字节码与基线一致，`package-check` `passed=true`（`WolverineDS5.exe` `ebde5ff7…`，`WolverineDS5-bridge.exe` `ddf27033…`）。

@@ -227,7 +227,7 @@ begin
   begin
     if MsgBox('未检测到雷蛇雷云（Razer Synapse）。' + #13#10#13#10 +
               '雷云需要登录账号安装，无法静默完成。现在打开雷云下载页吗？' + #13#10 +
-              '装好并保持雷云运行后再打开 Wolverine DS5，并在 Chroma 里关闭“音频转震动”。',
+              '装好并保持雷云运行后再打开 Wolverine DS5。雷云的“音频转震动”实测不影响握把，遇到无端震动再关它。',
               mbConfirmation, MB_YESNO) = IDYES then
       OpenSynapseDownloadPage;
   end;
