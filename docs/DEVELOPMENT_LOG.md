@@ -4,6 +4,21 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（Xbox 模式改成提示，拨回 PC 自动连接）**
+
+- 用户要求：手柄在 Xbox 模式时接上托盘程序不要报错，只提醒切到 PC 模式；拨回 PC 模式后不重启程序、不拔插就能连上。
+- 现状核对：`_apply_mode` 对 Xbox 模式本来就是故意停桥接（`wanted` 只含 `pc`/`absent`），界面给的是灰色 `stopped` 而不是红色 `error`；切回 PC 由 2 秒轮询 `_probe` 重新拉起 `pc_bridge`，桥接内部 `gip_bridge.reconnect_loop` 每秒重试打开实体手柄，设备一出现就自己连上。
+- 改动：
+  - `app/core.py`：Xbox／桥接模式的标题从“桥接已停止”改成“请切换到 PC 模式”，说明去掉没有依据的“重新插拔”，改成“拨到 PC 模式后会自动连接”；手动停止仍显示“桥接已停止”。另外区分雷云状态：雷云没运行时显示“雷云未运行，握把不可用”，不再一律“等待握把震动服务”（就是这句让人误以为桥接没连上）。
+  - `app/main.py`：每次切到 Xbox 模式弹一次托盘气泡“手柄处于 Xbox 模式”；`_probe` 把模式变化写进 `startup.log`（`Mode: pc -> xbox (实例)`），诊断导出里能直接看到识别时刻；托盘菜单的黄色提示同步改词。
+  - `ui/StatusPage.qml`：文案与标题相同时不再显示那个点不了的按钮（Xbox 模式下两者原本是同一句话）。
+- 真机验证（源码版、隔离配置目录，13:39 一轮）：13:39:19.2 拨到 Xbox → 13:39:21 识别 `pc -> xbox` 并停桥接；13:39:31.3 拨回 PC、设备重新枚举 → 桥接 0.9 秒报 `connected` → 13:39:35.2 雷云认出手柄转“已连接”。全程没拔线、没重启程序，用户确认两边提示都正常。
+- 环境说明：这一轮雷云是程序拉起后 7 秒自己退出（`RazerAppEngine.exe` 退出码 9；本机 13:00 已退出过雷云），手动从开始菜单启动正常。与本次改动无关，但正是它让“等待握把震动服务”被读成“没连上”，所以一并修了文案。
+- 测试：`app/test_app.py`、`app/test_core.py` 82 项通过；全仓 405 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题。
+- 未做：Xbox 模式下不保持桥接常驻——那会让游戏看到一个没有震动的虚拟 DS5，和实体 Xbox 手柄抢主手柄。代价是 Xbox 模式期间虚拟 DS5 不存在，切回 PC 时是新起一个桥接进程（约 1 秒连上）。
+
+---
+
 **Wolverine DS5 · 2026-10-30（1.1.29 候选包：删除柔和握把后的构建）**
 
 - 版本 1.1.29，以 `dist/candidate-1.1.28` 为基线旁路构建；允许变化模块：`app`、`app.window`、`app.ui_model`、`settings`、`pcm_to_sensa`、`pc_bridge`、`sensa_multiband`、`xbox_multiband`、`xbox_sensa`、`xusb_bridge`、`gip_bridge`，其余桥接字节码与基线一致，`package-check` `passed=true`。
