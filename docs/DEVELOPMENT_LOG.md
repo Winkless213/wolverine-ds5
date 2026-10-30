@@ -4,6 +4,15 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（1.1.28 候选包：默认打击档 + 启用多频段）**
+
+- 版本 1.1.28（`app/__init__.py`），以 `dist/candidate-1.1.27` 为基线旁路构建；允许变化的模块为 `app`、`app.core`、`app.synapse`、`app.ui_model`、`settings`、`pcm_encoder`、`sensa_multiband` 与入口，其余桥接字节码与基线一致，`package-check` `passed=true`。
+- 候选包写入 `_internal/multiband.enabled`（`pc_bridge.main` 现有开关），让默认「打击」档在实测包里真正生效；`WolverineDS5.spec` 与安装器仍不写这个标记，正式包维持单频。
+- 交付：`dist/Wolverine-DS5-Setup-1.1.28.exe`（59.5 MB，SHA256 `889c533709441a9fb6553e1caa0cdb7b9c5adba4cadf4ce3172790ed97400447`）；本机静默安装→校验 exe 版本 1.1.28、marker、文档与工具目录→静默卸载无残留。`dist/Wolverine-DS5-1.1.28-patch.zip`（13.3 MB，两个 exe + `multiband.enabled`）。
+- 验证：构建脚本默认回归 126 项通过；全仓 432 通过，13 项失败仍为既有 HAR/`test_run_capture` 环境问题；候选包 `--self-test` 退出码 0（`qml=True`，capture/SDL3/设备清单齐全）。
+
+---
+
 **Wolverine DS5 · 2026-10-30（打击档实机确认，设为默认档）**
 
 - 用户实机反馈（`work/dist-synapse-offline`，桥接模块与 profile10 逐字节一致，档位“打击”）：“打击档位非常非常不错，现在战斗确实不丢震动了，打击反馈也正常了”。10-29 的窗口 .03/.08 与档位地板 4 由此确认，“断成点”问题关闭。
