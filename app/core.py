@@ -142,9 +142,9 @@ def describe(running, wanted, status, mode):
     if not wanted:
         if mode is None:
             return "waiting", "正在检测手柄", ""
-        detail = ("手柄当前是 Xbox 模式；握把震动只支持 PC 模式，请切到 PC 模式并重新插拔"
-                  if mode in ("xbox", "bridge") else "已手动停止，可在托盘菜单启动")
-        return "stopped", "桥接已停止", detail
+        if mode in ("xbox", "bridge"):
+            return "stopped", "请切换到 PC 模式", "手柄当前是 Xbox 模式；握把震动只支持 PC 模式，拨到 PC 模式后会自动连接"
+        return "stopped", "桥接已停止", "已手动停止，可在托盘菜单启动"
     if not running:
         return "error", "桥接异常退出", "正在自动重启，详情见日志"
     state = status.get("state")
@@ -152,6 +152,9 @@ def describe(running, wanted, status, mode):
         if status.get("grips_ready") is False:
             if status.get("synapse") == "offline":
                 return "waiting", "雷云离线，握把不可用", "输入正常；雷云没联网时不会加载手柄。请恢复网络后重启雷云 Synapse"
+            if status.get("synapse") == "stopped":
+                # 桥接只能看到共享内存打不开；雷云根本没运行时，"等待识别手柄"会让人以为连接失败。
+                return "waiting", "雷云未运行，握把不可用", "输入正常；程序会尝试打开雷云 Synapse，也可从开始菜单手动启动"
             return "waiting", "等待握把震动服务", "输入正常；正在等待雷云 Synapse 识别手柄，握把暂不可用"
         return "connected", "已连接", "PC 模式：震动经 Sensa 输出到左右握把"
     if state == "connected":
@@ -167,7 +170,7 @@ def describe(running, wanted, status, mode):
     if mode == "absent":
         return "waiting", "等待手柄", "请用数据线连接手柄（PC 模式）"
     if mode in ("xbox", "bridge"):
-        return "waiting", "等待手柄", "手柄仍是 Xbox 模式；握把震动只支持 PC 模式，请切到 PC 模式并重新插拔"
+        return "waiting", "等待手柄", "手柄仍是 Xbox 模式；握把震动只支持 PC 模式，请切到 PC 模式"
     return "waiting", "等待手柄", "正在连接"
 
 

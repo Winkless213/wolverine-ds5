@@ -67,10 +67,25 @@ class DescribeTests(unittest.TestCase):
         self.assertEqual(describe(True, True, {"state": "connected", "handshake_s": 1.78}, "bridge"),
                          ("connected", "已连接", "握手 1.78 秒"))
 
-    def test_xbox_mode_is_a_deliberate_stop_not_an_error(self):
+    def test_xbox_mode_is_a_prompt_to_switch_not_a_stop(self):
         key, title, detail = describe(False, False, {}, "xbox")
-        self.assertEqual((key, title), ("stopped", "桥接已停止"))
+        self.assertEqual((key, title), ("stopped", "请切换到 PC 模式"))
         self.assertIn("Xbox 模式", detail)
+        self.assertIn("自动连接", detail)
+        self.assertNotIn("插拔", detail)
+
+    def test_manual_stop_keeps_the_stopped_wording(self):
+        self.assertEqual(describe(False, False, {}, "pc")[:2], ("stopped", "桥接已停止"))
+
+    def test_dead_synapse_is_named_instead_of_waiting_for_the_pad(self):
+        status = {"state": "connected", "backend": "sensa", "grips_ready": False, "synapse": "stopped"}
+        key, title, detail = describe(True, True, status, "pc")
+        self.assertEqual((key, title), ("waiting", "雷云未运行，握把不可用"))
+        self.assertIn("输入正常", detail)
+
+    def test_offline_synapse_keeps_its_own_wording(self):
+        status = {"state": "connected", "backend": "sensa", "grips_ready": False, "synapse": "offline"}
+        self.assertEqual(describe(True, True, status, "pc")[1], "雷云离线，握把不可用")
 
     def test_bridge_dying_unexpectedly_is_an_error(self):
         self.assertEqual(describe(False, True, {"state": "connected"}, "bridge")[0], "error")

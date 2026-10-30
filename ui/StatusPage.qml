@@ -52,6 +52,8 @@ Item {
                     border.color: Theme.green
                     border.width: 1
                     opacity: appModel.actionEnabled ? 1 : 0.4
+                    // Xbox 模式下来回重复同一句提示，按钮也点不了；文案与标题相同时只留标题。
+                    visible: appModel.actionText !== appModel.statusTitle
 
                     Text {
                         anchors.centerIn: parent

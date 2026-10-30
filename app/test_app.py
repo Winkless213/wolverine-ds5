@@ -181,14 +181,36 @@ class AppTests(unittest.TestCase):
     def test_xbox_mode_at_startup_does_not_start_the_bridge(self):
         app, bridge, _, _ = self.make_app(mode="xbox")
         self.assertEqual(bridge.started, 0)
-        self.assertEqual(app.model.statusTitle, "桥接已停止")
+        self.assertEqual(app.model.statusTitle, "请切换到 PC 模式")
         self.assertIn("PC 模式", app.model.statusDetail)
+        self.assertIn("自动连接", app.model.statusDetail)
 
     def test_xbox_bridge_mode_at_startup_does_not_start_the_bridge(self):
         app, bridge, _, _ = self.make_app(mode="bridge")
         self.assertEqual(bridge.started, 0)
-        self.assertEqual(app.model.statusTitle, "桥接已停止")
+        self.assertEqual(app.model.statusTitle, "请切换到 PC 模式")
         self.assertIn("PC 模式", app.model.statusDetail)
+
+    def test_mode_changes_are_written_to_the_startup_log(self):
+        app, _, system, path = self.make_app(mode="xbox")
+        system.service, system.instance = "usbccgp", "USB\\VID_1532&PID_0A4C\\TEST"
+        app._probe()
+        contents = (path.parent / "startup.log").read_text(encoding="utf-8")
+        self.assertIn("Mode: xbox -> pc", contents)
+
+    def test_xbox_mode_reminds_once_and_again_after_switching_back(self):
+        app, bridge, system, _ = self.make_app(mode="xbox")
+        notes = []
+        app.notify, app.xbox_hinted = notes.append, False
+        app._probe()
+        app._probe()
+        self.assertEqual(notes, ["xbox"])
+        system.service, system.instance = "usbccgp", "USB\\VID_1532&PID_0A4C\\TEST"
+        app._probe()
+        self.assertTrue(wait_for(lambda: bridge.started == 1, timeout=5))
+        system.service, system.instance = "dc1-controller", "USB\\VID_1532&PID_0A3F\\TEST"
+        app._probe()
+        self.assertEqual(notes, ["xbox", "xbox"])
 
     def test_disconnect_and_reconnect_notify_once_each(self):
         app, bridge, _, _ = self.make_app()
@@ -351,6 +373,15 @@ class PcModeTests(unittest.TestCase):
         self.check_grips(app, system, 1)
         self.assertEqual(app.model.sensaState, "等待")
         self.assertEqual(app.state_title, "等待握把震动服务")
+        app.toast.assert_not_called()
+
+    def test_dead_synapse_shows_the_real_reason_without_a_warning(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        app.toast = Mock()
+        system.grips = "stopped"
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": True})
+        self.check_grips(app, system, 1)
+        self.assertEqual(app.state_title, "雷云未运行，握把不可用")
         app.toast.assert_not_called()
 
     def test_unreadable_razer_logs_keep_the_bridges_own_verdict(self):

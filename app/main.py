@@ -28,6 +28,7 @@ from app.window import MODE_TEXT, status_icon
 NOTICES = {"connected": ("手柄已连接", "虚拟 DualSense 已就绪"),
            "lost": ("手柄已断开", "重新插上即可恢复，游戏无需重启"),
            "reconnected": ("手柄已重新连接", "震动与按键已恢复"),
+           "xbox": ("手柄处于 Xbox 模式", "握把震动只支持 PC 模式；拨到 PC 模式后会自动连接"),
            "new_port": ("手柄换了 USB 口", "游戏可能又能看到实体手柄；请在“设备与系统”页把“对游戏隐藏实体手柄”关闭再打开")}
 
 
@@ -75,6 +76,7 @@ class App(QObject):
         self.events = core.BridgeEvents(lambda event: self.notify(event))
         self.status, self.mode, self.instance = {}, None, None
         self.wanted = self.paused = self.busy = self.closing = self.checking = self.hinted = False
+        self.xbox_hinted = False
         self.pending_driver = None
         self.hiding = self.hide_failed = self.exiting = self.quit_pending = False
         self.connected_at = None
@@ -140,9 +142,15 @@ class App(QObject):
         changed = mode != self.mode or (instance or self.instance) != self.instance
         self.instance = instance or self.instance
         if mode != self.mode:
-            self.mode = mode
+            previous, self.mode = self.mode, mode
+            # 用户拨模式开关后，诊断导出要能看出程序在什么时刻认出了哪一种模式。
+            self._log_synapse(f"Mode: {previous} -> {mode} ({instance or 'no device'})")
             if not self.busy:
                 self._apply_mode()
+        if mode in ("xbox", "bridge"):
+            self._remind_pc_mode()
+        else:
+            self.xbox_hinted = False
         if changed:
             if self._hide_warning() == "port":
                 self.notify("new_port")
@@ -151,6 +159,12 @@ class App(QObject):
             self._check_grips()
         if self.mode == "pc" and self._grips_ready() is False:
             self._ensure_synapse()
+
+    def _remind_pc_mode(self):
+        # Xbox 模式不是故障：每次切到该模式只提醒一次，拨回 PC 模式后桥接会自己起来。
+        if not self.xbox_hinted:
+            self.xbox_hinted = True
+            self.notify("xbox")
 
     def _hide_warning(self):
         """HidHide 按设备实例隐藏、按程序路径放行；两者任一和当前不符，隐藏就不完整。"""
@@ -275,7 +289,7 @@ class App(QObject):
         if self.bridge.is_running or self.wanted:
             self.paused = True
         elif self.mode != "pc":
-            self.toast("warning", "请切换到 PC 模式", "握把震动只支持 PC 模式；把手柄拨到 PC 模式并重新插拔")
+            self.toast("warning", "请切换到 PC 模式", "握把震动只支持 PC 模式；把手柄拨到 PC 模式后会自动连接")
             return
         else:
             self.paused = False
