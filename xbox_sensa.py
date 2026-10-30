@@ -10,7 +10,7 @@ import time
 from gip_host import rumble
 from sensa_multiband import PcmMailbox
 from sensa_offline import HAR_PATH, HAR_SHA256, OfflineSensa, Target
-from xbox_multiband import BandAnalyzer, LevelHold, FrequencyHold, QUIET_BANDS, compose_envelope
+from xbox_multiband import BandAnalyzer, QUIET_BANDS, compose_envelope
 
 PARTS = (216, 116, 249, 149)
 QUIET = [(0, 80), (0, 80)]
@@ -131,8 +131,6 @@ class SensaStream:
         self.bands = [QUIET_BANDS, QUIET_BANDS]
         self.pcm = PcmMailbox()
         self.analyzer = BandAnalyzer()
-        self.hold = FrequencyHold()
-        self.level = LevelHold()
         self.epoch = None
         self.previous_state = None
         self.last_write = None
@@ -166,8 +164,6 @@ class SensaStream:
         if batch.epoch != self.epoch:
             if self.epoch is not None:
                 self.analyzer = BandAnalyzer()
-                self.hold.reset()
-                self.level.reset()
             self.epoch = batch.epoch
         if batch.pcm:
             self.analyzer.push(batch.pcm)
@@ -176,8 +172,6 @@ class SensaStream:
         else:
             # 没有直播音频时只保留 PC 包络的低频，避免 FFT 历史残影。
             sides = compose_envelope(values, [QUIET_BANDS, QUIET_BANDS], batch.state)
-        if batch.state.settings.grip_soft:
-            sides = self.level.apply(self.hold.apply(sides))
         return sides
 
     def _send(self, values, now, track=True):

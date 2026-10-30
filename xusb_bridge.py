@@ -7,9 +7,8 @@ from xusb_output import XusbOutput
 
 
 class XusbBridge:
-    def __init__(self, output=None, limit=.22, soft=False):
+    def __init__(self, output=None, limit=.22):
         self.limit = limit
-        self.soft = soft
         self.converter = self._make_converter()
         self.output = output if output is not None else XusbOutput()
         self.closed = False
@@ -28,15 +27,7 @@ class XusbBridge:
                       "hardware_output_attempted": False, "physical_latency_measured": False}
 
     def _make_converter(self):
-        converter = EnvelopeToSensa(self.limit)
-        converter.soft = self.soft
-        return converter
-
-    def set_soft(self, soft):
-        if soft != self.soft:
-            self.soft = soft
-            self.converter.soft = soft
-            self.grips = (0, 0)
+        return EnvelopeToSensa(self.limit)
 
     def stop(self):
         self.converter.reset()

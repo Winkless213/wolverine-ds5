@@ -114,18 +114,15 @@ def main():
     pcm, samples = read_wav(args.wav)
     reference = rms_envelope(samples)
 
-    soft = EnvelopeToSensa(limit=1)
-    soft.soft = True
     converters = [
         ("PcmToSensa（当前 Xbox 默认）", PcmToSensa(limit=1)),
         ("EnvelopeToSensa（PC 默认）", EnvelopeToSensa(limit=1)),
-        ("EnvelopeToSensa + soft（柔和握把）", soft),
     ]
     results = [run_converter(name, converter, pcm) for name, converter in converters]
     summaries = {result["name"]: metrics(result, reference[:, 0]) for result in results}
 
     out = args.out or args.wav.with_suffix(".haptic-compare.html")
-    colors = ["#4fc3f7", "#81c784", "#ffb74d"]
+    colors = ["#4fc3f7", "#81c784"]
     plots = [svg_plot("原始 PCM 包络（左/右）", [("左", reference[:, 0]), ("右", reference[:, 1])], ["#4fc3f7", "#ef5350"])]
     for result, color in zip(results, colors):
         plots.append(svg_plot(result["name"], [("左握把", result["left"]), ("右握把", result["right"])], [color, "#ef5350"]))

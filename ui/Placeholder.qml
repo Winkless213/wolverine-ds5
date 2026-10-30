@@ -19,7 +19,6 @@ QtObject {
     property bool gripEnabled: true
     property int gripGainPercent: 100
     property bool gripReady: true
-    property bool gripSoft: false
     property bool reduceMotion: false
     property bool audioGuard: true
     property bool hidePhysical: false

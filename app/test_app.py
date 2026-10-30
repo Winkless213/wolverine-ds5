@@ -178,13 +178,6 @@ class AppTests(unittest.TestCase):
         saved = settings.load(path)
         self.assertEqual((saved.grip_gain_left, saved.grip_gain_right), (.4, 1.2))
 
-    def test_soft_grip_switch_reaches_the_bridge_and_is_saved(self):
-        app, bridge, _, path = self.make_app()
-        app.model.setGripSoft(True)
-        self.assertTrue(json.loads(bridge.sent[-1])["settings"]["grip_soft"])
-        app.flush_save()
-        self.assertTrue(settings.load(path).grip_soft)
-
     def test_xbox_mode_at_startup_does_not_start_the_bridge(self):
         app, bridge, _, _ = self.make_app(mode="xbox")
         self.assertEqual(bridge.started, 0)

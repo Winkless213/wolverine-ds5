@@ -13,7 +13,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((settings.grip_gain, settings.grip_gain_left, settings.grip_gain_right,
                           settings.trigger_gain), (1.0, 1.0, 1.0, 1.0))
         self.assertFalse(settings.trigger_follow)
-        self.assertFalse(settings.grip_soft)
         self.assertTrue(settings.audio_guard)
 
     def test_legacy_single_gain_migrates_to_both_sides(self):

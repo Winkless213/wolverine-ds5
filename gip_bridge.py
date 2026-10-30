@@ -41,7 +41,7 @@ class Haptics:
         self.mapper = TriggerPair(gain=1, feedback_envelope=envelope, tone=trigger_tone)
         if envelope:
             print("Trigger resistance mapping: contact pulse, 60ms hold + 180ms fade", flush=True)
-        self.bridge = XusbBridge(output, limit=1, soft=(settings or Settings()).grip_soft)
+        self.bridge = XusbBridge(output, limit=1)
         self.bridge.mix = self.mix
         self.settings = settings or Settings()
         self.test_target = None
@@ -90,9 +90,6 @@ class Haptics:
         self.bridge.output = output
         self.bridge.previous = (0, 0, 0, 0)
         self.bridge.last_poll = self.bridge.last_write = None
-
-    def set_soft(self, soft):
-        self.bridge.set_soft(soft)
 
     def accept(self, message, now):
         if message["type"] == "output":
@@ -162,7 +159,6 @@ def handle_command(haptics, command):
         return True
     if command.get("type") == "settings" and isinstance(command.get("settings"), dict):
         haptics.settings = Settings.from_dict(command["settings"])
-        haptics.set_soft(haptics.settings.grip_soft)
     elif command.get("type") == "test" and command.get("target") in ("grip", "trigger", None):
         haptics.test_target = command["target"]
     return False

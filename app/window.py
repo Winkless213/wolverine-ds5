@@ -296,9 +296,7 @@ class VibrationPage(Page):
         self.grip_enabled = SwitchCard(FluentIcon.GAME, "握把震动", "左右握把的大马达", settings.grip_enabled, grip)
         self.grip_gain = SliderCard(FluentIcon.SPEED_HIGH, "握把强度", "100% 为默认强度",
                                     settings.grip_gain, 150, grip)
-        self.grip_soft = SwitchCard(FluentIcon.MIX_VOLUMES, "柔和握把", "按雷蛇自带的音频震动参数压低高频",
-                                    settings.grip_soft, grip)
-        for card in (self.grip_enabled, self.grip_gain, self.grip_soft):
+        for card in (self.grip_enabled, self.grip_gain):
             grip.addSettingCard(card)
         self.grip_test = TestCard("测试握把", "按 LT / RT 分别震左 / 右握把，按得越深越强",
                                   "测试中：按 LT 震左握把、RT 震右握把；游戏震动已暂停", grip)
@@ -335,7 +333,7 @@ class VibrationPage(Page):
             card.button.clicked.connect(
                 lambda _=False, target=target: self.test_requested.emit(None if self.testing == target else target))
 
-        for key in ("grip_enabled", "grip_soft", "trigger_enabled", "trigger_resistance", "trigger_follow"):
+        for key in ("grip_enabled", "trigger_enabled", "trigger_resistance", "trigger_follow"):
             getattr(self, key).switch.checkedChanged.connect(lambda checked, key=key: self._emit(key, checked))
         for key in ("grip_gain", "trigger_gain", "follow_ratio"):
             getattr(self, key).slider.valueChanged.connect(lambda percent, key=key: self._emit(key, percent / 100))
@@ -348,7 +346,6 @@ class VibrationPage(Page):
     def _sync(self):
         grip, trigger = self.grip_enabled.switch.isChecked(), self.trigger_enabled.switch.isChecked()
         self.grip_gain.setEnabled(grip)
-        self.grip_soft.setEnabled(grip)
         self.trigger_enabled.setEnabled(not self.pc_mode)
         trigger = trigger and not self.pc_mode
         for card in (self.trigger_gain, self.trigger_resistance, self.trigger_follow):

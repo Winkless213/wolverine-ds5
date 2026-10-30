@@ -233,19 +233,6 @@ Item {
                     SettingRow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 44
-                        title: "柔和握把"
-                        enabled: appModel.gripEnabled
-                        opacity: appModel.gripEnabled ? 1 : 0.45
-                        Toggle {
-                            value: appModel.gripSoft
-                            enabled: appModel.gripEnabled
-                            onToggled: appModel.setGripSoft(checked)
-                        }
-                    }
-
-                    SettingRow {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 44
                         title: "触觉配置文件"
                         enabled: appModel.gripEnabled
                         opacity: appModel.gripEnabled ? 1 : 0.45

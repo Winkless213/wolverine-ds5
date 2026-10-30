@@ -3,8 +3,7 @@ import unittest
 
 from settings import Settings
 from sensa_multiband import MixState
-from xbox_multiband import (BandAnalyzer, compose_bands, compose_envelope, ENVELOPE_MAX_TOTAL,
-                            FrequencyHold, LevelHold, QUIET_BANDS)
+from xbox_multiband import BandAnalyzer, compose_bands, compose_envelope, ENVELOPE_MAX_TOTAL, QUIET_BANDS
 
 
 def sine(seconds, amplitude, hz, sample_rate=48000):
@@ -101,20 +100,6 @@ class ComposeTests(unittest.TestCase):
         result = compose_bands(bands, self.state(rumble=(.2, 0.0)))
         self.assertAlmostEqual(result[0][0][0], .5, delta=1 / 63)
 
-    def test_soft_attenuates_high_band(self):
-        plain = compose_bands([((0, 80), (.4, 200)), QUIET_BANDS], self.state())
-        soft = compose_bands([((0, 80), (.4, 200)), QUIET_BANDS],
-                             self.state(settings=Settings(grip_soft=True)))
-        self.assertLess(soft[0][1][0], plain[0][1][0])
-        self.assertGreater(soft[0][1][0], 0)
-
-    def test_faint_low_content_is_lifted_not_flickering(self):
-        # 6–12 级（≈0.1–0.19）以下的纯低频弱内容按比例抬到稳定一层。
-        result = compose_bands([((.06, 60), (0, 80)), QUIET_BANDS], self.state(settings=Settings(grip_soft=True)))
-        low, high = result[0]
-        self.assertAlmostEqual(low[0], 16 / 63, delta=.02)
-        self.assertEqual(high[0], 0)
-
     def test_total_is_capped(self):
         result = compose_bands([((.4, 60), (.4, 200)), QUIET_BANDS], self.state())
         total = result[0][0][0] + result[0][1][0]
@@ -125,63 +110,18 @@ class ComposeTests(unittest.TestCase):
         outputs = []
         for value in values:
             result = compose_envelope([(value, 45), (0, 80)],
-                                      [((0, 80), (0, 80)), QUIET_BANDS],
-                                      self.state(settings=Settings(grip_soft=True)))
+                                      [((0, 80), (0, 80)), QUIET_BANDS], self.state())
             outputs.append(result[0][0][0])
         self.assertGreater(outputs[0], 0)
         self.assertEqual(outputs, sorted(outputs))
         self.assertGreater(outputs[3], outputs[2])
 
-    def test_envelope_soft_removes_high_frequency_texture(self):
-        high_286 = compose_envelope([(.148, 45), (0, 80)],
-                                    [((0, 80), (.08, 286)), QUIET_BANDS],
-                                    self.state(settings=Settings(grip_soft=True)))
-        high_120 = compose_envelope([(.148, 45), (0, 80)],
-                                    [((0, 80), (.08, 120)), QUIET_BANDS],
-                                    self.state(settings=Settings(grip_soft=True)))
-        self.assertEqual(high_286[0][1][0], 0)
-        self.assertGreater(high_120[0][1][0], 0)
-
     def test_envelope_cap_keeps_low_end_strength(self):
         result = compose_envelope([(.496, 45), (0, 80)],
-                                  [((0, 80), (.2, 120)), QUIET_BANDS],
-                                  self.state(settings=Settings(grip_soft=True)))
+                                  [((0, 80), (.2, 120)), QUIET_BANDS], self.state())
         total = result[0][0][0] + result[0][1][0]
         self.assertLessEqual(total, ENVELOPE_MAX_TOTAL + 1 / 63)
         self.assertGreater(result[0][0][0], .4)
-
-
-class HoldTests(unittest.TestCase):
-    def test_frequency_hold_stabilizes_small_jumps(self):
-        hold = FrequencyHold()
-        first = hold.apply([((.5, 60), (0, 80))])
-        self.assertEqual(first[0][0][1], 60)
-        second = hold.apply([((.5, 65), (0, 80))])
-        self.assertEqual(second[0][0][1], 60)
-        third = hold.apply([((.5, 64), (0, 80))])
-        self.assertEqual(third[0][0][1], 60)
-
-    def test_frequency_hold_tracks_large_jumps(self):
-        hold = FrequencyHold()
-        hold.apply([((.5, 60), (0, 80))])
-        jumped = hold.apply([((.5, 65), (0, 80))])
-        self.assertEqual(jumped[0][0][1], 60)
-        jumped = hold.apply([((.5, 30), (0, 80))])
-        self.assertEqual(jumped[0][0][1], 30)
-
-    def test_level_hold_smooths_small_amplitude_changes(self):
-        hold = LevelHold()
-        hold.apply([((.5, 60), (0, 80))])
-        result = hold.apply([((.49, 60), (0, 80))])
-        self.assertAlmostEqual(result[0][0][0], .5, delta=1 / 63)
-        result = hold.apply([((.3, 60), (0, 80))])
-        self.assertAlmostEqual(result[0][0][0], .3, delta=1 / 63)
-
-    def test_reset_clears_history(self):
-        hold = FrequencyHold()
-        hold.apply([((.5, 60), (0, 80))])
-        hold.reset()
-        self.assertEqual(hold.apply([((.5, 65), (0, 80))])[0][0][1], 65)
 
 
 if __name__ == "__main__":

@@ -267,9 +267,6 @@ class GripHaptics:
         self.output = output
         self.previous = [QUIET, QUIET]
 
-    def set_soft(self, soft):
-        self.converter.soft = soft
-
     @property
     def pcm(self):
         return getattr(self.output, "pcm", None)
@@ -314,7 +311,6 @@ class GripHaptics:
                 if self.pcm is not None:
                     self.pcm.clear()
                 self.generation = generation
-            self.converter.soft = self.settings.grip_soft
             parameters = self.converter.push(pcm)
             if parameters:
                 self.audio = [(side["amplitude"], side["frequency_hz"]) for side in parameters[-1]["channels"]]

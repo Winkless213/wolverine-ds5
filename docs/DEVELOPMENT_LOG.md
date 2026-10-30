@@ -4,6 +4,14 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（删除柔和握把）**
+
+- 用户决定砍掉柔和握把：它与「打击」档地板的组合尚未验证，且 PC / Xbox 两条输出路径各有一套整形规则，维护成本高于收益。
+- 删除：`settings.grip_soft` 与界面开关；PC 路径的频率加权/主频下压（`pcm_to_sensa.envelope_tone` 的 soft 分支）、`sensa_multiband` 的柔和频段衰减、弱低频抬升、稳频/稳幅/斜坡（`FrequencyHold`/`LevelHold`/`SustainSoftener`/`PointRamp`）；Xbox 路径的 soft 分支与 `xusb_bridge.soft`。旧配置里的 `grip_soft` 键会被忽略。
+- 验证：全仓 399 项通过，13 项失败仍为既有 HAR/`test_run_capture` 环境问题；删除的 33 项均为柔和握把专用用例。
+
+---
+
 **Wolverine DS5 · 2026-10-30（1.1.28 候选包：默认打击档 + 启用多频段）**
 
 - 版本 1.1.28（`app/__init__.py`），以 `dist/candidate-1.1.27` 为基线旁路构建；允许变化的模块为 `app`、`app.core`、`app.synapse`、`app.ui_model`、`settings`、`pcm_encoder`、`sensa_multiband` 与入口，其余桥接字节码与基线一致，`package-check` `passed=true`。

@@ -18,8 +18,6 @@ class Settings:
     grip_gain: float = 1.0
     grip_gain_left: float = None
     grip_gain_right: float = None
-    # PC 模式握把按雷蛇自带 profile 压低高频（100Hz 以上减弱、主频往低处压），手感更钝更柔。
-    grip_soft: bool = False
     # PC 多频握把使用的雷蛇编码器 profile：默认“打击”（full）；legacy 为原双频带，其余档位抄自 Synapse 音频到触觉预设。
     haptic_profile: str = DEFAULT_PROFILE
     # 只影响界面动效，不影响桥接。

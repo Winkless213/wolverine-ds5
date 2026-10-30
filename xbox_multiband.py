@@ -8,7 +8,6 @@ from collections import deque
 
 import numpy as np
 
-from settings import Settings
 from sensa_multiband import MixState
 
 QUIET_BANDS = ((0, 80), (0, 80))
@@ -20,33 +19,11 @@ LOW_MAX = 80
 HIGH_MIN = 84
 HIGH_MAX = 400
 MIN_TOTAL = 6 / 63
-FAINT_FLOOR = 16 / 63
-FAINT_HIGH = 3 / 63
 MAX_TOTAL = 32 / 63
-LEVEL_HOLD = 2 / 63
-FREQ_HOLD = 6.0
-HIGH_RATIO = .8
 RUMBLE_HZ = 50
 # 低频走 PC 包络后的总幅度上限；旧 FFT 路径的 32/63 会把强震压掉一半。
 ENVELOPE_MAX_TOTAL = 48 / 63
-# PC soft profile 的高频权重：100–150Hz 只留 0.3，200Hz 以上为 0。
-HIGH_EQ = ((0, 1.0), (50, 1.0), (100, .3), (130, .3), (200, 0.0))
-
-
 MIN_AMPLITUDE = 2 / 63
-
-
-def soft_gain(frequency):
-    return max(.5, 1 - max(0, frequency - 80) / 400)
-
-
-def soft_high_gain(frequency):
-    if frequency <= HIGH_EQ[0][0]:
-        return HIGH_EQ[0][1]
-    for (low, start), (high, end) in zip(HIGH_EQ, HIGH_EQ[1:]):
-        if frequency <= high:
-            return start + (end - start) * (frequency - low) / (high - low)
-    return HIGH_EQ[-1][1]
 
 
 class BandAnalyzer:
@@ -97,16 +74,6 @@ class BandAnalyzer:
         return result
 
 
-def shape_high_band(bands):
-    """实机记录：摆荡时高频压过低频（中位 1.38），战斗时低频主导（中位 0.77）。"""
-    low = bands[0][0]
-    top = max(band[0] for band in bands[1:])
-    if not low or not top or top <= HIGH_RATIO * low:
-        return bands
-    factor = max(.25, 1 / (1 + top / low - HIGH_RATIO))
-    return (bands[0],) + tuple((round6(band[0] * factor), band[1]) for band in bands[1:])
-
-
 def round6(value):
     return round(value * 63) / 63
 
@@ -116,19 +83,11 @@ def compose_side(bands, state, rumble, gain):
     strength = low[0] + high[0]
     if state.test_target == "grip" or rumble > strength:
         return ((rumble, RUMBLE_HZ), (0, 80))
-    if state.settings.grip_soft:
-        low = (low[0] * soft_gain(low[1]), low[1]) if low[0] else low
-        high = (high[0] * soft_gain(high[1]), high[1]) if high[0] else high
-        bands = shape_high_band((low, high))
-        low, high = bands
     low = (round6(low[0] * gain), low[1]) if low[0] else low
     high = (round6(high[0] * gain), high[1]) if high[0] else high
     total = low[0] + high[0]
     if 0 < total <= MIN_TOTAL:
-        if state.settings.grip_soft and state.test_target is None and low[0] and high[0] <= FAINT_HIGH:
-            low = (round6(low[0] * FAINT_FLOOR / low[0]) if low[0] else low[0], low[1])
-        else:
-            low = high = (0, low[1] if low[0] else 80)
+        low = high = (0, low[1] if low[0] else 80)
     total = low[0] + high[0]
     if total > MAX_TOTAL:
         floor = MAX_TOTAL / total
@@ -151,7 +110,7 @@ def compose_envelope(values, sides, state):
     """低频直接复用 PC 包络值，高频只留很轻的纹理。
 
     values 来自 GripHaptics 的 EnvelopeToSensa（已含 0.75 次方、增益和传统震动），
-    不再经过 FFT 低频的 2/63 门限和 16/63 固定平台；高频按 PC soft 权重压到 200Hz 以上为 0。
+    不再经过 FFT 低频的 2/63 门限和 16/63 固定平台。
     """
     gains = (state.settings.grip_gain_left, state.settings.grip_gain_right)
     if (state.test_target not in (None, "grip")
@@ -163,12 +122,8 @@ def compose_envelope(values, sides, state):
         low = (float(value[0]), float(value[1])) if value[0] else (0, 80)
         side = sides[index] if index < len(sides) else ()
         high = side[1] if len(side) > 1 else (0, 80)
-        if state.settings.grip_soft and high[0]:
-            high = (high[0] * soft_high_gain(high[1]), high[1])
         high = (round6(high[0] * gains[index]), high[1]) if high[0] else (0, 80)
         low = (round6(low[0]), low[1]) if low[0] else (0, 80)
-        if state.settings.grip_soft:
-            low, high = shape_high_band((low, high))
         total = low[0] + high[0]
         if total > ENVELOPE_MAX_TOTAL:
             scale = ENVELOPE_MAX_TOTAL / total
@@ -176,63 +131,3 @@ def compose_envelope(values, sides, state):
             high = (round6(high[0] * scale), high[1]) if high[0] else high
         result.append((low, high))
     return result
-
-
-class FrequencyHold:
-    """实机记录：小幅逐帧跳变沿用上一个频率，避免音高抖动；大跳变照实跟踪。"""
-
-    def __init__(self):
-        self.held = [None, None]
-
-    def reset(self):
-        self.held = [None, None]
-
-    def apply(self, sides):
-        output = []
-        for index, bands in enumerate(sides):
-            low = bands[0]
-            if not low[0]:
-                self.held[index] = None
-                output.append(bands)
-                continue
-            previous = self.held[index]
-            if previous is None or abs(low[1] - previous) > FREQ_HOLD:
-                self.held[index] = low[1]
-                output.append(bands)
-                continue
-            if abs(low[1] - previous) > 1:
-                output.append(((low[0], previous),) + bands[1:])
-            else:
-                output.append(bands)
-        return output
-
-
-class LevelHold:
-    """实机：中弱震动的 ±1 级逐帧闪烁听成若有若无；小变化沿用上一帧比例。"""
-
-    def __init__(self):
-        self.held = [None, None]
-
-    def reset(self):
-        self.held = [None, None]
-
-    def apply(self, sides):
-        output = []
-        for index, bands in enumerate(sides):
-            live = [band for band in bands if band[0]]
-            if not live:
-                self.held[index] = None
-                output.append(bands)
-                continue
-            top = max(band[0] for band in live)
-            previous = self.held[index]
-            if previous is None or abs(top - previous) >= LEVEL_HOLD:
-                self.held[index] = top
-                output.append(bands)
-                continue
-            if top != previous:
-                ratio = previous / top
-                output.append(tuple((round6(band[0] * ratio) if band[0] else 0, band[1]) for band in bands))
-            else:
-                output.append(bands)
-        return output

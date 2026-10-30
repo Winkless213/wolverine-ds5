@@ -140,16 +140,6 @@ class GripHapticsTests(unittest.TestCase):
         self.haptics.step(0, 0, now=.004)
         self.assertEqual(fresh.sides[0], (LIMIT, RUMBLE_HZ))
 
-    def test_soft_setting_switches_the_mapping_live(self):
-        feed(self.haptics, pcm_tones(((.4, 160),), frames=2400))
-        self.haptics.step(0, 0, now=.001)
-        sharp = self.grips.sides[0]
-        gip_bridge.handle_command(self.haptics, {"type": "settings", "settings": {"grip_soft": True}})
-        feed(self.haptics, pcm_tones(((.4, 160),), frames=2400), first=600)
-        self.haptics.step(0, 0, now=.002)
-        self.assertLess(self.grips.sides[0][0], sharp[0] / 2)
-        self.assertLess(self.grips.sides[0][1], 100)
-
     def test_settings_and_test_commands_reach_the_pc_haptics(self):
         gip_bridge.handle_command(self.haptics, {"type": "settings", "settings": {"grip_gain": .3}})
         gip_bridge.handle_command(self.haptics, {"type": "test", "target": "grip"})

@@ -52,7 +52,6 @@ class UiModel(QObject):
         self._grip_gain = round(settings.grip_gain * 100)
         self._grip_gain_left = round(settings.grip_gain_left * 100)
         self._grip_gain_right = round(settings.grip_gain_right * 100)
-        self._grip_soft = settings.grip_soft
         self._haptic_profile = getattr(settings, "haptic_profile", DEFAULT_PROFILE)
         self._reduce_motion = getattr(settings, "reduce_motion", False)
         self._audio_guard = settings.audio_guard
@@ -173,10 +172,6 @@ class UiModel(QObject):
     def gripGainRightPercent(self):
         return self._grip_gain_right
 
-    @Property(bool, notify=settingsChanged)
-    def gripSoft(self):
-        return self._grip_soft
-
     @Property(str, notify=settingsChanged)
     def hapticProfile(self):
         return self._haptic_profile
@@ -267,15 +262,15 @@ class UiModel(QObject):
     def apply_settings(self, settings):
         values = (settings.grip_enabled, round(settings.grip_gain * 100),
                   round(settings.grip_gain_left * 100), round(settings.grip_gain_right * 100),
-                  settings.grip_soft, getattr(settings, "haptic_profile", DEFAULT_PROFILE),
+                  getattr(settings, "haptic_profile", DEFAULT_PROFILE),
                   getattr(settings, "reduce_motion", False),
                   settings.audio_guard, settings.hide_physical)
         current = (self._grip_enabled, self._grip_gain, self._grip_gain_left, self._grip_gain_right,
-                   self._grip_soft, self._haptic_profile, self._reduce_motion, self._audio_guard,
+                   self._haptic_profile, self._reduce_motion, self._audio_guard,
                    self._hide_physical)
         if values != current:
             (self._grip_enabled, self._grip_gain, self._grip_gain_left, self._grip_gain_right,
-             self._grip_soft, self._haptic_profile, self._reduce_motion, self._audio_guard,
+             self._haptic_profile, self._reduce_motion, self._audio_guard,
              self._hide_physical) = values
             self.settingsChanged.emit()
 
@@ -325,12 +320,6 @@ class UiModel(QObject):
         self._grip_gain_right = percent
         self.settingsChanged.emit()
         self.settingsEdited.emit({"grip_gain_right": percent / 100})
-
-    @Slot(bool)
-    def setGripSoft(self, value):
-        self._grip_soft = value
-        self.settingsChanged.emit()
-        self.settingsEdited.emit({"grip_soft": value})
 
     @Slot(str)
     def setHapticProfile(self, value):

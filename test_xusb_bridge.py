@@ -4,7 +4,6 @@ from unittest.mock import Mock
 from test_capture_recorder import block
 from test_pcm_to_sensa import pcm_tones
 from xusb_bridge import XusbBridge
-from pcm_to_sensa import EnvelopeToSensa
 
 
 class BridgeTests(unittest.TestCase):
@@ -96,20 +95,6 @@ class BridgeTests(unittest.TestCase):
         bridge.accept({"type": "stopped"}, now=.005)
         bridge.poll((.1, 0), now=.025)
         self.assertEqual(output.set.call_args.args, (0, 0, 0, 0))
-
-    def test_soft_mode_uses_envelope_converter_with_soft_flag(self):
-        bridge = XusbBridge(Mock(), soft=True)
-        self.assertIsInstance(bridge.converter, EnvelopeToSensa)
-        self.assertTrue(bridge.converter.soft)
-        self.assertEqual(bridge.stats["mapping"], "stereo envelope amplitude")
-
-    def test_set_soft_toggles_the_envelope_soft_flag_at_runtime(self):
-        bridge = XusbBridge(Mock())
-        self.assertFalse(bridge.converter.soft)
-        bridge.set_soft(True)
-        self.assertTrue(bridge.converter.soft)
-        bridge.set_soft(False)
-        self.assertFalse(bridge.converter.soft)
 
 
 if __name__ == "__main__":
