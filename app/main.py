@@ -79,6 +79,7 @@ class App(QObject):
         self.xbox_hinted = False
         self.pending_driver = None
         self.hiding = self.hide_failed = self.exiting = self.quit_pending = False
+        self.hiding_active = self.hide_transient = False
         self.connected_at = None
         self.icon_key = self.state_title = None
         self.tray = None
@@ -180,6 +181,11 @@ class App(QObject):
     def _apply_mode(self):
         # PC-only 产品：PC 模式（以及拔线后的 absent）保持虚拟 DS5；Xbox 模式保留为实验性代码，不自动接管。
         self.wanted = self.mode in ("pc", "absent") and not self.paused
+        if self.wanted and self.settings.hide_physical and not self.hiding_active \
+                and not self.hiding and not self.hide_failed:
+            # 隐藏是给桥接用的：桥接重新起来之前先把实体手柄藏回去，成功后再由 _hide_done 拉起桥接。
+            self._set_hidden(True, transient=True)
+            return
         if self.wanted and not self.bridge.pc:
             # 从旧模式切到 PC：先停当前桥接，退出后由重启计时器拉起（虚拟 DS5 会短暂断开）。
             self.bridge.set_pc(True)
@@ -188,8 +194,12 @@ class App(QObject):
                 return
         if self.wanted:
             self._start_bridge()
-        elif self.bridge.is_running:
+            return
+        if self.bridge.is_running:
             self.bridge.stop()
+        if self.hiding_active and self.settings.hide_physical and not self.hiding:
+            # 桥接停了就别再藏着实体手柄：否则虚拟 DS5 没了、手柄也看不见，游戏里一只都没有。
+            self._set_hidden(False, transient=True)
 
     def _start_bridge(self):
         if self.bridge.is_running or self.closing or self.hiding or self.hide_failed or self.quit_pending or self.exiting:
@@ -320,7 +330,8 @@ class App(QObject):
         running = self.bridge.is_running
         connected = running and self.status.get("state") == "connected"
         ready = self._grips_ready()
-        status = dict(self.status, grips_ready=ready, synapse=self.grips_state)
+        status = dict(self.status, grips_ready=ready, synapse=self.grips_state,
+                      hide_released=bool(self.settings.hide_physical and not self.hiding_active))
         key, title, detail = core.describe(running, self.wanted, status, self.mode)
         if self.busy:
             key, title, detail = "waiting", "正在切换驱动", "请在弹出的窗口中允许管理员权限"
@@ -429,10 +440,11 @@ class App(QObject):
 
     # ---- 对游戏隐藏实体手柄（HidHide） ----
 
-    def _set_hidden(self, hidden):
+    def _set_hidden(self, hidden, transient=False):
         if self.hiding or self.exiting or self.closing:
             return
         self.hiding = True
+        self.hide_transient = transient
 
         def work():
             try:
@@ -445,19 +457,31 @@ class App(QObject):
 
     def _hide_done(self, code, hidden):
         self.hiding = False
+        transient, self.hide_transient = self.hide_transient, False
         if self.closing:
             return
         self.hide_failed = hidden and code != 0
         if code == 0:
-            self.model.set_hide_physical(hidden)
-            self.update_settings({"hide_physical": hidden,
-                                  "hidden_devices": tuple(self.system.pc_instances()) if hidden else (),
-                                  "hidden_app": core.bridge_command(pc=True)[0] if hidden else ""})
+            self.hiding_active = hidden
+            # 临时解除隐藏只为把实体手柄让回去，界面上的开关仍反映保存的偏好。
+            self.model.set_hide_physical(self.settings.hide_physical if transient else hidden)
+            if transient:
+                if hidden:
+                    self.update_settings({"hidden_devices": tuple(self.system.pc_instances()),
+                                          "hidden_app": core.bridge_command(pc=True)[0]})
+            else:
+                self.update_settings({"hide_physical": hidden,
+                                      "hidden_devices": tuple(self.system.pc_instances()) if hidden else (),
+                                      "hidden_app": core.bridge_command(pc=True)[0] if hidden else ""})
             if self.quit_pending:
                 self.quit()
                 return
             self._apply_mode()
             self._refresh()
+            if transient:
+                if not hidden:
+                    self.toast("success", "实体手柄已恢复", "桥接停止期间游戏可以看到原生手柄；启动桥接会自动重新隐藏")
+                return
             self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄", "设置已保存")
             return
         self.model.set_hide_physical(self.settings.hide_physical)

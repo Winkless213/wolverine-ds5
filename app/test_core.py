@@ -77,6 +77,10 @@ class DescribeTests(unittest.TestCase):
     def test_manual_stop_keeps_the_stopped_wording(self):
         self.assertEqual(describe(False, False, {}, "pc")[:2], ("stopped", "桥接已停止"))
 
+    def test_manual_stop_mentions_the_released_pad(self):
+        self.assertIn("实体手柄已恢复可见", describe(False, False, {"hide_released": True}, "pc")[2])
+        self.assertNotIn("实体手柄", describe(False, False, {}, "pc")[2])
+
     def test_dead_synapse_is_named_instead_of_waiting_for_the_pad(self):
         status = {"state": "connected", "backend": "sensa", "grips_ready": False, "synapse": "stopped"}
         key, title, detail = describe(True, True, status, "pc")

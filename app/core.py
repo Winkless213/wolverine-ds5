@@ -144,7 +144,9 @@ def describe(running, wanted, status, mode):
             return "waiting", "正在检测手柄", ""
         if mode in ("xbox", "bridge"):
             return "stopped", "请切换到 PC 模式", "手柄当前是 Xbox 模式；握把震动只支持 PC 模式，拨到 PC 模式后会自动连接"
-        return "stopped", "桥接已停止", "已手动停止，可在托盘菜单启动"
+        detail = ("已手动停止，实体手柄已恢复可见，可在托盘菜单启动" if status.get("hide_released")
+                  else "已手动停止，可在托盘菜单启动")
+        return "stopped", "桥接已停止", detail
     if not running:
         return "error", "桥接异常退出", "正在自动重启，详情见日志"
     state = status.get("state")

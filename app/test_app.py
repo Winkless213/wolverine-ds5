@@ -497,6 +497,32 @@ class PcModeTests(unittest.TestCase):
         app.flush_save()
         self.assertFalse(settings.load(path).hide_physical)
 
+    def test_stopping_the_bridge_gives_the_physical_pad_back(self):
+        # 虚拟 DS5 卸载后手柄还藏着，游戏里就一只都看不到；停止桥接要把实体手柄让回去。
+        app, bridge, system, path = self.make_app(mode="pc", saved=settings.Settings(hide_physical=True))
+        self.assertTrue(wait_for(lambda: app.hiding_active, timeout=5))
+        app.model.toggleBridge()
+        self.assertTrue(wait_for(lambda: system.hiding_calls[-1][0] is False, timeout=5))
+        self.assertFalse(bridge.is_running)
+        app.flush_save()
+        self.assertTrue(settings.load(path).hide_physical)  # 偏好保留，下次桥接仍然隐藏
+
+    def test_restarting_the_bridge_hides_the_pad_again(self):
+        app, bridge, system, _ = self.make_app(mode="pc", saved=settings.Settings(hide_physical=True))
+        self.assertTrue(wait_for(lambda: app.hiding_active, timeout=5))
+        app.model.toggleBridge()
+        self.assertTrue(wait_for(lambda: system.hiding_calls[-1][0] is False, timeout=5))
+        app.model.toggleBridge()
+        self.assertTrue(wait_for(lambda: system.hiding_calls[-1][0] is True, timeout=5))
+        self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
+
+    def test_stopping_without_the_hide_preference_leaves_hidhide_alone(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        before = len(system.hiding_calls)
+        app.model.toggleBridge()
+        self.assertTrue(wait_for(lambda: not bridge.is_running, timeout=5))
+        self.assertEqual(len(system.hiding_calls), before)
+
 
 class NativeExitTests(unittest.TestCase):
     make_app = AppTests.make_app
