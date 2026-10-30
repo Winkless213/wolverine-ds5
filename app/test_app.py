@@ -329,6 +329,15 @@ class PcModeTests(unittest.TestCase):
         self.assertEqual(bridge.started, 1)
         self.assertEqual(app.model.sensaState, "就绪")
 
+    def test_failed_synapse_start_warns_instead_of_claiming_success(self):
+        app, bridge, _, _ = self.make_app(mode="pc")
+        self.assertTrue(wait_for(lambda: not app.synapse_checking, timeout=1))
+        app.toast = Mock()
+        app._synapse_done("failed")
+        self.assertTrue(bridge.is_running)
+        self.assertIn("雷云", app.toast.call_args.args[1])
+        self.assertIn("手动", app.toast.call_args.args[2])
+
     def test_missing_synapse_does_not_stop_input_and_warns_once(self):
         app, bridge, system, _ = self.make_app(mode="pc")
         self.assertTrue(wait_for(lambda: system.synapse_calls == 1 and not app.synapse_checking, timeout=1))

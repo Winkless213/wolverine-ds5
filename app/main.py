@@ -233,6 +233,8 @@ class App(QObject):
         self._log_synapse(f"Synapse: {result}")
         if result == "started":
             self.toast("success", "已启动雷云", "握把服务就绪后自动恢复震动")
+        elif result == "failed":
+            self.toast("warning", "雷云没有启动成功", "请从开始菜单手动打开 Razer Synapse；手柄输入可继续使用")
         elif result == "missing":
             self.toast("warning", "未找到雷云启动入口", "请安装或手动打开 Razer Synapse；手柄输入可继续使用")
         elif result.startswith("error:"):

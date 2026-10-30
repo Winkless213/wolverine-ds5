@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import psutil
@@ -17,6 +18,10 @@ OFFLINE = "No internet connection found"
 LISTED = "devices shown in dashboard [{"
 DASHBOARD_TIME = re.compile(r"\[(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d)")
 TAIL_BYTES = 1 << 20
+# 拉起雷云后的观察窗口：startfile 成功不代表引擎站住，实测见过它 6 秒后自己退出。
+START_TIMEOUT = 8.0
+START_STABLE = 2.0
+START_POLL = .5
 
 
 def find_shortcut():
@@ -119,11 +124,29 @@ def diagnose(haptic_log=None, dashboard_dir=None):
     return "offline" if dashboard_offline(dashboard_dir, started) else "unregistered"
 
 
-def ensure_running():
-    if is_running():
+def ensure_running(wait=None, clock=None, probe=None):
+    """启动雷云并确认它真的站住：startfile 成功只代表拉起了入口，引擎可能几秒后自己退出。
+
+    返回 running（本来就在跑）/ started（拉起并稳定住）/ failed（拉起了又退出）/ missing（没装）。
+    """
+    wait = wait or time.sleep
+    clock = clock or time.monotonic
+    probe = probe or is_running
+    if probe():
         return "running"
     shortcut = find_shortcut()
     if shortcut is None:
         return "missing"
     os.startfile(str(shortcut), show_cmd=0)
-    return "started"
+    seen = None
+    deadline = clock() + START_TIMEOUT
+    while clock() < deadline:
+        wait(START_POLL)
+        now = clock()
+        if not probe():
+            seen = None  # 起来了又退出，继续等到期限再下结论
+            continue
+        seen = now if seen is None else seen
+        if now - seen >= START_STABLE:
+            return "started"
+    return "started" if probe() else "failed"

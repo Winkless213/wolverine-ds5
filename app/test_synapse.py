@@ -97,13 +97,40 @@ class SynapseTests(unittest.TestCase):
         find.assert_not_called()
         launch.assert_not_called()
 
+    def ensure(self, alive_after, dies_after=None, shortcut=Path("C:/Start Menu/Razer/Razer Synapse.lnk")):
+        """alive_after=None 表示一直不活；dies_after 表示活到这里又退出。时钟和等待都是假的，不真的睡。"""
+        state = {"t": 0.0, "launched": False}
+
+        def wait(seconds):
+            state["t"] += seconds
+
+        def clock():
+            return state["t"]
+
+        def probe():
+            if not state["launched"] or alive_after is None:
+                return False
+            return alive_after <= state["t"] < (dies_after if dies_after is not None else float("inf"))
+
+        def launch(path, show_cmd=0):
+            state["launched"] = True
+
+        with patch.object(synapse, "find_shortcut", return_value=shortcut), \
+                patch.object(synapse.os, "startfile", side_effect=launch) as started:
+            result = synapse.ensure_running(wait=wait, clock=clock, probe=probe)
+        return result, started
+
     def test_installed_synapse_starts_through_its_shortcut(self):
-        shortcut = Path("C:/Start Menu/Razer/Razer Synapse.lnk")
-        with patch.object(synapse, "is_running", return_value=False), \
-                patch.object(synapse, "find_shortcut", return_value=shortcut), \
-                patch.object(synapse.os, "startfile") as launch:
-            self.assertEqual(synapse.ensure_running(), "started")
-        launch.assert_called_once_with(str(shortcut), show_cmd=0)
+        result, launch = self.ensure(alive_after=0)
+        self.assertEqual(result, "started")
+        launch.assert_called_once_with(str(Path("C:/Start Menu/Razer/Razer Synapse.lnk")), show_cmd=0)
+
+    def test_engine_that_never_comes_up_is_reported_as_failed(self):
+        self.assertEqual(self.ensure(alive_after=None)[0], "failed")
+
+    def test_engine_that_dies_again_is_not_reported_as_started(self):
+        # 实测：拉起来 6 秒后自己退出；只看到它出现就报 started，界面会前后矛盾。
+        self.assertEqual(self.ensure(alive_after=0, dies_after=1.0)[0], "failed")
 
     def test_missing_install_does_not_download_or_launch(self):
         with patch.object(synapse, "is_running", return_value=False), \
