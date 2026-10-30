@@ -4,6 +4,15 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（1.1.29 候选包：删除柔和握把后的构建）**
+
+- 版本 1.1.29，以 `dist/candidate-1.1.28` 为基线旁路构建；允许变化模块：`app`、`app.window`、`app.ui_model`、`settings`、`pcm_to_sensa`、`pc_bridge`、`sensa_multiband`、`xbox_multiband`、`xbox_sensa`、`xusb_bridge`、`gip_bridge`，其余桥接字节码与基线一致，`package-check` `passed=true`。
+- 候选包继续写入 `_internal/multiband.enabled`，默认「打击」档在多频段实测包里生效；正式包仍不写该标记。
+- 交付：`dist/Wolverine-DS5-Setup-1.1.29.exe`（59.5 MB，SHA256 `a99ce3648bc0f2087fccd1548c556d00e27bda100998ea9b176501b4ac2d3ed0`）；静默安装→校验 exe 版本 1.1.29、marker、文档、StatusPage 已无柔和行→静默卸载无残留。`dist/Wolverine-DS5-1.1.29-patch.zip`（13.3 MB，两个 exe + `multiband.enabled` + 两个 QML）。
+- 验证：默认回归 107 项通过；全仓 399 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题；`--self-test` 退出码 0。
+
+---
+
 **Wolverine DS5 · 2026-10-30（删除柔和握把）**
 
 - 用户决定砍掉柔和握把：它与「打击」档地板的组合尚未验证，且 PC / Xbox 两条输出路径各有一套整形规则，维护成本高于收益。
