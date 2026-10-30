@@ -4,6 +4,16 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（1.1.30 候选包：Xbox 模式提示与切回自动连接）**
+
+- 版本 1.1.30，以 `dist/candidate-1.1.29` 为基线旁路构建；允许变化模块 `app/core.py`、`app/main.py`、`app/__init__.py`，其余桥接字节码与基线一致，`package-check` `passed=true`（`WolverineDS5.exe` `ebde5ff7…`，`WolverineDS5-bridge.exe` `ddf27033…`）。
+- 候选包继续写入 `_internal/multiband.enabled`，默认「打击」档在实测包里生效；正式包仍不写该标记。
+- 交付：`dist/Wolverine-DS5-Setup-1.1.30.exe`（59.5 MB，SHA256 `7e8e72bb1fb51348aa185a4f385037bea7c7cbf79df63eb44cc16e88a1afa009`）；静默安装 → 校验 exe 版本 1.1.30、marker、文档含本次条目、`StatusPage.qml` 含新的按钮隐藏绑定 → `--self-test` 退出码 0 → 静默卸载无残留。`dist/Wolverine-DS5-1.1.30-patch.zip`（13.3 MB，两个 exe + `multiband.enabled` + `ui/StatusPage.qml` + 覆盖说明）。
+- 验证：构建脚本默认回归 110 项通过；全仓 405 通过、13 项失败仍为既有 HAR/`test_run_capture` 环境问题。
+- 注意：这次只改了托盘程序侧（`app`），桥接逻辑没动；补丁包带上两个 exe 是因为版本号资源两边都写。
+
+---
+
 **Wolverine DS5 · 2026-10-30（Xbox 模式改成提示，拨回 PC 自动连接）**
 
 - 用户要求：手柄在 Xbox 模式时接上托盘程序不要报错，只提醒切到 PC 模式；拨回 PC 模式后不重启程序、不拔插就能连上。
