@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-24",
+  "question": "Xbox 模式的私有 Sensa 流能否驱动扳机 bodypart 249/149（此前只有本地编码单测，从未实机验证）",
+  "device": "Razer Wolverine V3 Pro for Xbox",
+  "mode": "Xbox (VID 1532 / PID 0A3F)",
+  "connection": "wired USB-C",
+  "instance": "USB\\VID_1532&PID_0A3F\\0000225AB1E9C5E8",
+  "driver": "WinUSB 10.0.26100.9549（tools/swap_winusb.ps1 -Install）",
+  "encoder": "C:\\Program Files (x86)\\Interhaptics\\HapticService\\HAR.dll sha256=ed774be3b3fac9d3dad0d75c8ad2e95d019fec1c4720b77957ce434e468c807e",
+  "metadata": "xbox-sensa-device.json（4 bodypart：216/116 握把 20-300Hz，249/149 扳机 0-300Hz 共振 20Hz，每侧 2 bands / 2 points / 2 transients）",
+  "probe": "work/xbox_trigger_probe.py",
+  "segments": [
+    {"label": "grips 80Hz", "grips": [0.6, 0.6], "triggers": [0, 0], "trigger_hz": 20, "seconds": 2.5},
+    {"label": "triggers 20Hz", "grips": [0, 0], "triggers": [0.6, 0.6], "trigger_hz": 20, "seconds": 2.5},
+    {"label": "triggers 80Hz", "grips": [0, 0], "triggers": [0.6, 0.6], "trigger_hz": 80, "seconds": 2.5},
+    {"label": "triggers 180Hz", "grips": [0, 0], "triggers": [0.6, 0.6], "trigger_hz": 180, "seconds": 2.5},
+    {"label": "trigger LT only", "grips": [0, 0], "triggers": [0.6, 0], "trigger_hz": 80, "seconds": 2.0},
+    {"label": "trigger RT only", "grips": [0, 0], "triggers": [0, 0.6], "trigger_hz": 80, "seconds": 2.0},
+    {"label": "grips+triggers", "grips": [0.4, 0.4], "triggers": [0.4, 0.4], "trigger_hz": 120, "seconds": 2.5}
+  ],
+  "protocol_result": {"frames_sent": 592, "acks_received": 591, "note": "最后 1 帧的 0x10 ack 在关闭前未读到，不是丢失"},
+  "physical_result": {
+    "grips_vibrated": true,
+    "triggers_vibrated": true,
+    "trigger_frequency_distinguishable": true,
+    "left_right_triggers_separable": true,
+    "four_motors_in_one_frame": true,
+    "confirmed_by": "用户口头确认「都对」"
+  },
+  "conclusion": "Xbox 模式的私有 16/0E 流可以在同一帧里独立驱动 4 个马达并带频率；握把与扳机互不覆盖。这比 PC 模式（NumberBodyPart=2，只有握把）更强，可作为统一路线。",
+  "incidental_findings": [
+    "GIP 握手会偶发被设备拒绝：第一次运行报 GipAuthError 'Device rejected handshake step 0x05'，重开后第一次即成功（2.29s / 2.73s）。桥接靠 reconnect_loop 掩盖了这一点。",
+    "swap_winusb.ps1 -Install 之后必须拔插一次：未拔插时 CreateFile 成功但 WinUsb_Initialize 返回 ERROR_INVALID_FUNCTION(1)，pyusb 表现为 claim_interface Access denied；拔插后同一实例 WinUsb_Initialize 正常。",
+    "占用假设已排除：提权运行、停掉 Microsoft GameInput（XboxService，服务已停且进程数 0）、HidHide 处于 inactive 且隐藏名单为空，均不改变结果。"
+  ],
+  "not_validated": [
+    "扳机在真实游戏 DS5 触发效果下的手感与延迟",
+    "私有握把的帧结构上限（Xbox 元数据是 2 bands / 2 points，PC 模式是 3 bands / 4 points），因此 Xbox 私有握把不等于 PC 模式多频握把的丰富度",
+    "长时间运行下 0x10 ack 的稳定性与断流恢复"
+  ]
+}

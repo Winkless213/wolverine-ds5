@@ -1,5 +1,4 @@
 import base64
-import io
 import json
 import os
 from pathlib import Path
@@ -87,7 +86,8 @@ class TriggerTraceTests(unittest.TestCase):
     def test_recording_does_not_change_hardware_commands(self):
         baseline_output, traced_output = Mock(), Mock()
         baseline = Haptics(baseline_output)
-        with patch.dict(os.environ, {"WOLVERINE_TRIGGER_TRACE_FLAG": str(self.flag)}), patch("sys.stdout", new_callable=io.StringIO) as log:
+        with patch.dict(os.environ, {"WOLVERINE_TRIGGER_TRACE_FLAG": str(self.flag),
+                                     "LOCALAPPDATA": self.folder.name}):
             traced = Haptics(traced_output)
             self.flag.touch()
             for haptics in (baseline, traced):
@@ -96,10 +96,13 @@ class TriggerTraceTests(unittest.TestCase):
                 haptics.step(0, 255, now=10.05)
                 haptics.accept(trigger_report(right_effect=bytes([5]) + bytes(10)), now=10.08)
                 haptics.step(0, 0, now=10.1)
-            events = [json.loads(line) for line in log.getvalue().splitlines()]
+            logs = list((Path(self.folder.name) / "WolverineDS5" / "logs").glob("trigger-trace-*.jsonl"))
+            self.assertEqual(len(logs), 1)
+            events = [json.loads(line) for line in logs[0].read_text(encoding="utf-8").splitlines()]
         self.assertEqual(baseline_output.set.call_args_list, traced_output.set.call_args_list)
         self.assertTrue(any(event["event"] == "start" for event in events))
         self.assertTrue(any(event.get("state", {}).get("r2") == 255 for event in events))
+        self.assertTrue(any(event["event"] == "output" for event in events))
 
 
 if __name__ == "__main__":

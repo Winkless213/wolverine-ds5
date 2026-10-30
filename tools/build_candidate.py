@@ -20,7 +20,8 @@ from PyInstaller.archive.readers import CArchiveReader, PKG_ITEM_PYZ
 
 BRIDGE_EXE = "WolverineDS5-bridge.exe"
 APP_EXE = "WolverineDS5.exe"
-APP_MODULES = ("app", "app.core", "app.window", "app.bridge", "app.native", "app.synapse", "settings")
+APP_MODULES = ("app", "app.core", "app.window", "app.bridge", "app.native", "app.synapse",
+               "app.ui_model", "app.qml_window", "settings")
 DEFAULT_TESTS = ("test_sensa_multiband.py", "test_pc_bridge.py", "test_sensa_frame.py", "test_settings.py",
                  "app/test_core.py")
 # 这些文件随包分发或决定构建输入，必须与源码一致；不参与字节码比对。
@@ -64,7 +65,7 @@ def frozen_assets(source):
     return assets
 
 
-def report(package, baseline, source, allow, assets, marker):
+def report(package, baseline, source, allow, assets, marker, allowed_assets=()):
     bridge, old_bridge = archive_modules(package / BRIDGE_EXE), archive_modules(baseline / BRIDGE_EXE)
     app, old_app = archive_modules(package / APP_EXE), archive_modules(baseline / APP_EXE)
     changed, unchanged, missing = {}, {}, []
@@ -96,7 +97,10 @@ def report(package, baseline, source, allow, assets, marker):
     for name in ASSET_FILES:
         new_path, old_path = package / "_internal" / name, baseline / "_internal" / name
         # 归档里的二进制（capture / SDL3）不入库，只能与基线包比对；仓库内文件与源码比对。
-        if new_path.exists() and old_path.exists():
+        # --allow-asset 显式放行的二进制仍要求包内副本与仓库文件一致。
+        if name in allowed_assets and new_path.exists() and (source / name).exists():
+            assets_unchanged[name] = digest(new_path) == digest(source / name)
+        elif new_path.exists() and old_path.exists():
             assets_unchanged[name] = digest(new_path) == digest(old_path)
         elif new_path.exists() and (source / name).exists():
             assets_unchanged[name] = digest(new_path) == digest(source / name)
@@ -107,6 +111,7 @@ def report(package, baseline, source, allow, assets, marker):
               "unchanged_app_modules": app_unchanged,
               "source_unchanged_during_build": all(digest(source / name) == sha for name, sha in assets.items()),
               "assets_unchanged": assets_unchanged,
+              "allowed_assets": sorted(allowed_assets),
               "bundled_vendor_dlls": vendor,
               "source_sha256": assets,
               "executables_sha256": {name: digest(package / name) for name in (APP_EXE, BRIDGE_EXE)}}
@@ -127,6 +132,7 @@ def main():
     parser.add_argument("--out", required=True, help="本次候选输出目录（不存在时新建）")
     parser.add_argument("--allow", nargs="+", default=[], help="允许变化的源文件，相对仓库根")
     parser.add_argument("--marker", default="", help="构建通过后写入 _internal 的标记文件名")
+    parser.add_argument("--allow-asset", nargs="*", default=[], help="允许相对基线变化的包内二进制；仍需与仓库文件一致")
     parser.add_argument("--spec", default="WolverineDS5.spec")
     parser.add_argument("--tests", nargs="*", default=list(DEFAULT_TESTS))
     parser.add_argument("--verify-only", action="store_true")
@@ -156,7 +162,8 @@ def main():
             raise SystemExit(f"构建失败，详见 {log}")
     else:
         assets = frozen_assets(source)
-    result = report(output / "WolverineDS5", baseline / "WolverineDS5", source, allow, assets, args.marker)
+    result = report(output / "WolverineDS5", baseline / "WolverineDS5", source, allow, assets, args.marker,
+                    args.allow_asset)
     (output / "package-check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in result.items() if key != "source_sha256"}, indent=2))
     raise SystemExit(0 if result["passed"] else 1)

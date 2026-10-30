@@ -3,11 +3,16 @@
 ;   ISCC.exe installer\WolverineDS5.iss
 
 #define AppName "Wolverine DS5"
-#define AppVersion "1.0.4"
+; 版本与源目录可由命令行动态指定：ISCC.exe /DAppVersion=1.1.26 /DAppSrc=..\dist\candidate-1.1.26
+#ifndef AppVersion
+  #define AppVersion "1.0.4"
+#endif
 #define AppPublisher "Winkless213"
 #define AppURL "https://github.com/Winkless213/wolverine-ds5"
 #define AppExe "WolverineDS5.exe"
-#define AppSrc "..\dist\WolverineDS5"
+#ifndef AppSrc
+  #define AppSrc "..\dist\WolverineDS5"
+#endif
 ; 随包托盘程序的版本取自 app/__init__.py（WolverineDS5.spec 写入 exe），与 AppVersion 不一致时先重新构建。
 #if GetFileProductVersionString(AddBackslash(SourcePath) + AppSrc + "\" + AppExe) != AppVersion
   #error 随包的 WolverineDS5.exe 版本与 AppVersion 不一致，请先重新构建 PyInstaller 包
@@ -24,7 +29,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-VersionInfoVersion=1.0.4.0
+VersionInfoVersion={#AppVersion}.0
 VersionInfoDescription={#AppName} installer
 VersionInfoProductName={#AppName}
 DefaultDirName={localappdata}\Programs\{#AppName}
@@ -57,12 +62,14 @@ Source: "{#AppSrc}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\DEVELOPMENT_LOG.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\docs\TESTER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\tools\install-dependencies.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\reference-licenses\*"; DestDir: "{app}\reference-licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{group}\开发与实测记录"; Filename: "{app}\docs\DEVELOPMENT_LOG.md"
+Name: "{group}\使用说明"; Filename: "{app}\docs\TESTER_GUIDE.md"
 Name: "{group}\卸载 {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 

@@ -10,8 +10,8 @@ from qfluentwidgets import (BodyLabel, CaptionLabel, FluentIcon, FluentWindow, I
 from app import __version__
 
 STATE_COLORS = {"connected": "#16A34A", "waiting": "#D97706", "error": "#DC2626", "stopped": "#6B7280"}
-MODE_TEXT = {"bridge": "桥接模式（WinUSB）", "xbox": "Xbox 模式", "pc": "PC 模式（Sensa 握把）",
-             "absent": "未检测到手柄", None: "正在检测"}
+MODE_TEXT = {"bridge": "Xbox 模式（不支持，请切换到 PC 模式）", "xbox": "Xbox 模式（不支持，请切换到 PC 模式）",
+             "pc": "PC 模式（Sensa 握把）", "absent": "未检测到手柄", None: "正在检测"}
 
 
 def draw_status_icon(state, size):
@@ -52,26 +52,27 @@ def palette():
 
 
 class Meter(QWidget):
-    """四路马达电平条。"""
+    """PC 模式两路握把电平条。"""
 
-    LABELS = ("左握把", "右握把", "左扳机", "右扳机")
+    LABELS = ("左握把", "右握把")
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.values = [0, 0, 0, 0]
-        self.setMinimumHeight(112)
+        self.values = [0, 0]
+        self.setMinimumHeight(88)
         setFont(self, 13)
 
     def set_values(self, values):
+        values = list(values)[:len(self.LABELS)]
         if values != self.values:
-            self.values = list(values)
+            self.values = values
             self.update()
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         text, track = palette()
-        row = self.height() / 4
+        row = self.height() / len(self.LABELS)
         for index, (label, value) in enumerate(zip(self.LABELS, self.values)):
             y = index * row
             painter.setPen(text)
@@ -282,7 +283,7 @@ class StatusPage(Page):
         self.inputs.set_state(message)
 
     def clear(self):
-        self.meter({"motors": [0, 0, 0, 0], "l2": 0, "r2": 0, "buttons": 0, "dpad": 0, "sticks": [0, 0, 0, 0]})
+        self.meter({"motors": [0, 0], "l2": 0, "r2": 0, "buttons": 0, "dpad": 0, "sticks": [0, 0, 0, 0]})
 
 
 class VibrationPage(Page):
@@ -300,7 +301,7 @@ class VibrationPage(Page):
         for card in (self.grip_enabled, self.grip_gain, self.grip_soft):
             grip.addSettingCard(card)
         self.grip_test = TestCard("测试握把", "按 LT / RT 分别震左 / 右握把，按得越深越强",
-                                  "测试中：按 LT 震左握把、RT 震右握把；游戏震动与扳机马达已暂停", grip)
+                                  "测试中：按 LT 震左握把、RT 震右握把；游戏震动已暂停", grip)
         grip.addSettingCard(self.grip_test)
 
         trigger = SettingCardGroup("扳机马达", self.view)
@@ -324,6 +325,8 @@ class VibrationPage(Page):
         self.pc_mode = False
         for group in (grip, trigger):
             self.column.addWidget(group)
+        # PC-only 产品：扳机链路保留在代码里作实验性实现，但不再出现在界面。
+        trigger.hide()
         self.column.addStretch(1)
 
         self.testing = None
@@ -411,10 +414,12 @@ class DevicePage(Page):
 
         about = SettingCardGroup("关于", self.view)
         about.addSettingCard(SettingCard(FluentIcon.INFO, f"Wolverine DS5 {__version__}",
-                                         "把 Razer Wolverine V3 Pro 呈现为 DualSense：PC 模式左右对称震动，Xbox 模式四马达",
+                                         "把 Razer Wolverine V3 Pro 呈现为 DualSense：PC 模式驱动左右握把震动",
                                          about))
         for group in (driver, system, about):
             self.column.addWidget(group)
+        # PC-only 产品：驱动切换和 Xbox 路线保留在代码里作实验性实现，不再出现在界面。
+        driver.hide()
         self.column.addStretch(1)
 
         self.autostart.switch.checkedChanged.connect(self.autostart_changed)

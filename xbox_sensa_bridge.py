@@ -1,4 +1,4 @@
-"""复用 PC 握把映射与 Xbox 扳机映射，只有私有握把输出为实验路径。"""
+"""四个马达同走一条私有 Sensa 帧：握把沿用 PC 模式映射，扳机带自己的载波频率。"""
 import json
 import time
 
@@ -8,36 +8,49 @@ from xbox_sensa import SensaStream, trigger_packet
 
 
 class Triggers:
-    def __init__(self, host, stream=None):
-        self.host, self.stream = host, stream
+    """私有流在场时扳机与握把同帧下发；没有私有流才回退到实机验证过的 GIP 0x0F 指令。"""
+
+    def __init__(self, host, stream=None, tones=None):
+        self.host, self.stream, self.tones = host, stream, tones
         self.previous = (0, 0)
-        self.last_private_sent = 0
-        self.paired_refreshes = 0
 
     def set(self, left, right, lt, rt):
-        # 只有握把变化时不能附带全马达停止指令，否则会覆盖私有握把流。
         if (lt, rt) == self.previous == (0, 0):
             return
-        self.host.send_message(0x09, 0, trigger_packet(lt, rt))
         self.previous = (lt, rt)
-        self.last_private_sent = self.stream.sent if self.stream is not None else 0
+        if self.stream is None:
+            self.host.send_message(0x09, 0, trigger_packet(lt, rt))
+            return
+        left_hz, right_hz = self.tones()
+        self.stream.set_triggers(((lt, left_hz), (rt, right_hz)))
 
-    def refresh(self, enabled):
-        if not enabled:
-            self.set(0, 0, 0, 0)
-        elif self.stream is not None and self.stream.sent != self.last_private_sent and any(self.previous):
-            # 私有帧可能覆盖标准扳机；同轮已发送最新扳机时不重复补发。
-            self.set(0, 0, *self.previous)
-            self.paired_refreshes += 1
+    def stop_now(self):
+        """关掉扳机震动要当拍就停，不能等 20ms 限频窗口或下一次值变化。"""
+        self.set(0, 0, 0, 0)
 
 
 class XboxHaptics(gip_bridge.Haptics):
-    def __init__(self, settings=None):
-        super().__init__(gip_bridge.NullOutput(), settings)
+    def __init__(self, settings=None, private=True):
+        self.private = private
+        super().__init__(gip_bridge.NullOutput(), settings, trigger_tone=private)
         self.grips = GripHaptics(NullGrips(), self.settings)
         self.stream = None
         self.last_stats = time.monotonic()
-        self.bridge.stats.update(backend="xbox-sensa-experimental", frequency_preserved=True)
+        self.bridge.stats.update(backend="xbox-sensa-private" if private else "gip-rumble-fallback",
+                                 frequency_preserved=private)
+
+    def trigger_tones(self):
+        return (self.mapper.left.tone_hz, self.mapper.right.tone_hz)
+
+    def trace_state(self, l2, r2):
+        state = super().trace_state(l2, r2)
+        state.update(grips=[list(value) for value in self.grips.previous],
+                     tones=[self.mapper.left.tone_hz, self.mapper.right.tone_hz])
+        if self.stream is not None:
+            state.update(bands=[[list(band) for band in side] for side in self.stream.bands],
+                         stream_triggers=[list(pair) for pair in self.stream.triggers],
+                         stream_sent=self.stream.sent, stream_accepted=self.stream.accepted)
+        return state
 
     def attach(self, output, grips=None):
         if self.stream is not None:
@@ -53,9 +66,9 @@ class XboxHaptics(gip_bridge.Haptics):
         else:
             self.stream = SensaStream(output) if grips is None else None
             self.grips.attach(self.stream if grips is None else grips)
-            super().attach(Triggers(output, self.stream))
-            print("Haptic backend: xbox-sensa-experimental; grips=private 16/0E; triggers=GIP mask 0x0F; "
-                  "trigger_refresh=after-private-frame", flush=True)
+            super().attach(Triggers(output, self.stream, self.trigger_tones))
+            print("Haptic backend: xbox-sensa-private; grips=216/116, triggers=249/149, "
+                  "all four in one 16/0E frame", flush=True)
 
     def mix(self, values, now):
         _, _, lt, rt = super().mix((0, 0, values[2], values[3]), now)
@@ -67,6 +80,7 @@ class XboxHaptics(gip_bridge.Haptics):
     def accept(self, message, now):
         kind = message["type"]
         if kind == "audio":
+            self.record(message)
             if self.bridge.ended or message.get("generation", 0) < self.grips.generation:
                 return
             if message.get("host_queue_us", 0) > 50000:
@@ -99,16 +113,18 @@ class XboxHaptics(gip_bridge.Haptics):
             self.grips.rumble = (0, 0)
             if self.stream is not None:
                 self.stream.stop()
-        self.grips.step(l2, r2, now)
+        # 先算扳机再渲染握把：四路进同一帧，扳机不会落后一个渲染周期。
         super().step(l2, r2, now)
-        if self.stream is not None:
-            self.bridge.output.refresh(self.test_target == "trigger" or
-                                       self.test_target is None and self.settings.trigger_enabled)
+        triggers_on = self.test_target == "trigger" or (self.test_target is None
+                                                        and self.settings.trigger_enabled)
+        if self.stream is not None and not triggers_on:
+            self.bridge.output.stop_now()
+        self.grips.step(l2, r2, now)
         if self.stream is not None and time.monotonic() - self.last_stats >= 5:
-            print(json.dumps({"haptic_backend": "xbox-sensa-experimental", "grips": self.grips.previous,
+            print(json.dumps({"haptic_backend": "xbox-sensa-private", "grips": self.grips.previous,
+                              "bands": self.stream.bands, "triggers": self.stream.triggers,
                               "stream_sent": self.stream.sent, "stream_accepted": self.stream.accepted,
-                              "stream_pending": len(self.stream.pending),
-                              "trigger_paired_refreshes": self.bridge.output.paired_refreshes}), flush=True)
+                              "stream_pending": len(self.stream.pending)}), flush=True)
             self.last_stats = time.monotonic()
 
 

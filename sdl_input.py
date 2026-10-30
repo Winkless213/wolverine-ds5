@@ -3,6 +3,12 @@ import ctypes as c
 import pathlib
 import time
 
+# DualSense 触摸板坐标是 1920×1080 的绝对量；View 键在 SDL 里是 4。
+TOUCH_X_MAX = 1919
+TOUCH_Y_MAX = 1079
+SWIPE_DEADZONE = 8000
+VIEW_BUTTON = 4
+
 
 def verified_xinput_alias():
     from xusb_output import XusbApi, find_razer_interface
@@ -34,10 +40,20 @@ def input_state(axes, buttons):
     state = dict(zip(("LX", "LY", "RX", "RY"), (max(-128, min(127, value // 256)) for value in axes[:4])))
     state.update(L2=round(max(0, axes[4]) * 255 / 32767), R2=round(max(0, axes[5]) * 255 / 32767),
                  Buttons=0, DPad=0, AccelZ=-8192)
+    # 实体没有触摸板：View 按住时用右摇杆当触点，满偏到触摸板边缘、居中到正中；
+    # 摇杆在死区内仍按原来的“点击”处理，推杆则只报触点，避免一次滑动被游戏当成点击。
+    swiping = VIEW_BUTTON in buttons and (abs(axes[2]) >= SWIPE_DEADZONE or abs(axes[3]) >= SWIPE_DEADZONE)
+    if swiping:
+        state["Touch1X"] = max(0, min(TOUCH_X_MAX, round(TOUCH_X_MAX / 2 + axes[2] / 32767 * TOUCH_X_MAX / 2)))
+        state["Touch1Y"] = max(0, min(TOUCH_Y_MAX, round(TOUCH_Y_MAX / 2 + axes[3] / 32767 * TOUCH_Y_MAX / 2)))
+        state["Touch1Active"] = True
+        state["Touch1Tracking"] = 1
     # 实体没有触摸板，View 键用于游戏中的触摸板点击。
     masks = {0:0x20, 1:0x40, 2:0x10, 3:0x80, 4:0x20000, 5:0x10000, 6:0x2000,
              7:0x4000, 8:0x8000, 9:0x100, 10:0x200}
     for button, mask in masks.items():
+        if button == VIEW_BUTTON and swiping:
+            continue
         if button in buttons:
             state["Buttons"] |= mask
     for button, mask in ((11,1), (12,2), (13,4), (14,8)):

@@ -106,6 +106,15 @@ class DescribeTests(unittest.TestCase):
         self.assertIn("输入正常", detail)
         self.assertIn("Synapse", detail)
 
+    def test_offline_synapse_tells_the_user_to_restore_network_and_restart_it(self):
+        status = {"state": "connected", "backend": "sensa", "grips_ready": False, "synapse": "offline"}
+        key, title, detail = describe(True, True, status, "pc")
+        self.assertEqual(key, "waiting")
+        self.assertIn("离线", title)
+        self.assertIn("输入正常", detail)
+        self.assertIn("网络", detail)
+        self.assertIn("重启雷云", detail)
+
 
 class ParseLineTests(unittest.TestCase):
     def test_status_and_meter_lines_are_structured(self):

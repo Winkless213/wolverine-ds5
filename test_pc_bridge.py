@@ -97,6 +97,15 @@ class GripHapticsTests(unittest.TestCase):
         self.haptics.step(0, 0, now=.004)
         self.assertEqual([side[0] for side in self.grips.sides], [0, 0])
 
+    def test_pc_uses_the_single_master_gain_for_both_grips(self):
+        # PC 界面上只有一个强度；左右字段即使不同也不能影响输出，否则手感和显示会不一致。
+        self.haptics.accept(rumble_report(left=255, right=255), now=0)
+        self.haptics.settings = Settings(grip_enabled=True, grip_gain=.5, grip_gain_left=.2, grip_gain_right=1.5)
+        self.haptics.step(0, 0, now=0)
+        left, right = (side[0] for side in self.grips.sides)
+        self.assertAlmostEqual(left, min(1, LIMIT * .5))
+        self.assertAlmostEqual(right, min(1, LIMIT * .5))
+
     def test_grip_test_follows_lt_rt_and_mutes_the_game(self):
         self.haptics.accept(rumble_report(left=255, right=255), now=0)
         self.haptics.test_target = "grip"

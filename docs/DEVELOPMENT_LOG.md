@@ -4,6 +4,139 @@
 
 ---
 
+**Wolverine DS5 · 2026-10-30（打击档实机确认，设为默认档）**
+
+- 用户实机反馈（`work/dist-synapse-offline`，桥接模块与 profile10 逐字节一致，档位“打击”）：“打击档位非常非常不错，现在战斗确实不丢震动了，打击反馈也正常了”。10-29 的窗口 .03/.08 与档位地板 4 由此确认，“断成点”问题关闭。
+- 改动：新增 `settings.DEFAULT_PROFILE = "full"`，`Settings` 默认值和非法值回退都用它；`app/ui_model.py`、`sensa_multiband.py` 里各自写死的 `"legacy"` 回退改为引用同一常量，改默认时不再漏一处。已保存的选择不迁移：设置文件里已有 `haptic_profile` 的（包括 `legacy`）保持原样，只有新装或从没存过档位的用户拿到“打击”。
+- 测试：默认值相关 3 项改为 `full`，新增“已保存的旧版选择保持不变”；`test_transient_slots_are_dropped_instead_of_killing_the_output`、`test_faint_low_residue_is_lifted_into_a_layer_instead_of_read_as_noise` 原本隐含依赖旧默认档，分别显式固定为 `dynamic` / `legacy`（它们测的是非打击档的行为）。全仓 432 通过；13 项失败为既有环境问题（HAR 校验 12 项、`test_run_capture` 1 项），与本次无关。
+- 注意：档位只在多频候选（`multiband.enabled` / `WOLVERINE_MULTIBAND=1`）生效；`WolverineDS5.spec` 与安装器目前都不写这个标记，正式包仍走单频 `SensaGrips`，默认档对它没有影响。
+- 待确认：打击档地板 4 与柔和握把的组合——总强度 5–6 的弱低频帧不再进入“抬成稳定一层”的分支，按原样输出（旧版档会抬到 16）；柔和握把默认关闭，这次实机也是关闭，尚无反馈。`xbox_multiband.py` 仍未同步这套窗口与地板。
+- 顺带核对：`ui/assets/fonts/RazerF5-*.ttf` 的字体元数据声明为 SIL Open Font License（改自 Titillium）；若按 OFL 随包分发，需要在 `reference-licenses/` 附上 OFL 授权文本，目前还没有。
+
+---
+
+**Wolverine DS5 · 2026-10-30（雷云离线不认手柄：握把就绪改看雷蛇日志）**
+
+- 现象：早上断网时桥接自动拉起雷云（startup.log 10:20:40 `started`），雷云 10:21:04 在 dashboard 日志记 `No internet connection found. App is running in offline mode.`，设备列表为空，界面不提示；HapticService 一直没有 `DeviceAdded`，直到 10:29 手动重启雷云、10:29:41 才登记。
+- 我们的误判：10:20:41 桥接已报 `grips_ready: true`。多频带输出只要能打开 HapticService 的共享内存就算就绪，而这个服务开机就在跑，不代表雷云已经把手柄交给它。
+- 改动：`app/synapse.diagnose()` 读 HapticService 日志末尾，手柄（`2636-{ContainerId}`）最新一条是 `DeviceAdded` 且其后没有服务重启（`Establishing connection`）或与雷云失联（`RpcPing failed`）才算 `ready`；未登记时按雷云这次启动后的 dashboard 日志区分 `offline` / `unregistered`，雷云不在为 `stopped`，读不到日志为 `unknown`（沿用桥接自己的判断）。托盘每 5 秒在后台检查一次，未就绪时状态写“等待握把震动服务”；离线时写“雷云离线，握把不可用”并弹一次提示，只提示、不碰雷云进程。
+- 复核：用本机真实日志截到早上各时刻回放，10:20:50 → `unregistered`、10:25 → `offline`、10:29:39 → `unregistered`、10:29:45 → `ready`，与实际时间线一致。
+- 教训：判断外部服务“就绪”要看它对我们这台设备的登记，不能只看服务进程或共享内存在不在；依赖雷蛇日志格式，雷云升级后若检查一直是 `unknown`，先看日志行格式是否变了。
+
+---
+
+**Wolverine DS5 · 2026-10-29（打击档修“断成点”：窗口 .03/.08 + 档位地板 4）**
+
+- 用户反馈“有改善但信息表达依然不准确”，追问后锁定为“断续不对：该连成一片的断成点”。用同一份真实录音按 40ms 帧统计活跃段：`full` 档 1–2 帧的孤立段占 20.6%（段长中位数 10 帧、间隙中位数 8 帧），比旧版 14.1%、动态 8.6% 都碎；`balanced` 19.1% 同样偏碎。
+- 扫描窗口 × 弱帧地板共 12 组（`work/probe_continuity_sweep.py`）：只把地板降到 4 时孤立段 15.8%；只把窗口放到 .03/.08 时 12.5%；两者合用 6.1%，独立峰只从 1.13 降到 1.07 次/秒，包络相关 0.74→0.73。地板再降到 2 反而回升到 24.1%（零星噪声帧各自成段），所以停在 4。
+- 复核（`work/probe_accuracy.py`）：`full` 存活帧 30.5%→33.8%、撞顶率 3.8%→4.0%（平衡档仍 18.8%）、幅度档位仍用满 32 级、滞后 0→10ms（窗口变长一个采样块）。频带分布不变。
+- 改动：`pcm_encoder.game_profile("full")` 两带窗口 .02/.06 → .03/.08；`sensa_multiband.PROFILE_FLOOR = {"full": 4}`，`compose_frame` 按档位取弱帧阈值（其余档仍是全局 6，观感不变）。
+- 验证：52 项 `test_sensa_multiband` 通过（短窗断言同步改成 .03/.08，新增 `test_full_profile_keeps_faint_frames_other_profiles_clear`：6 级弱帧在“打击”档保留、平衡档清零）；全仓 414 项通过，13 项 HAR 相关失败是本机 HAR 校验不匹配的既有环境问题。
+- 未做：`xbox_multiband.py` 仍是自己的 `MIN_TOTAL = 6/63`，未同步这套窗口与地板。
+
+---
+
+**Wolverine DS5 · 2026-10-29（满配改为“打击”：三带被真实录音否掉）**
+
+- 用户反馈满配在战斗里“傻震动，不是一拳一拳”。用真实游戏触觉录音（`captures/20261025-150823/usb-host-0002.wav`，60 秒）量化：满配原方案输出存活帧 49.2%、响帧 26.9%、独立峰 1.00 次/秒、与源包络相关 0.63——比平衡（1.10/23.3%）更“填满”，打击被抹平。
+- 逐项对因：去掉 200–400 Hz 第三条带后峰 1.08、响帧 24.4%；把幅度/频率窗口从 .04/.125 缩到 .02/.06 后峰 1.22、响帧 19.9%；再换旧版那套松压缩（.5/.5/γ3）并抬音量到 1.2/.9，得到峰 1.35、响帧 13.2%、相关 0.72。
+- 结论：第三条带和长频率窗会把帧持续填满，是“傻”的来源；打击分离主要靠短窗 + 松压缩。
+- 改动：`full` 档改为两带（30–100 音量 1.2、100–200 音量 .9）、窗口 .02/.06、压缩 .5/.5/γ3、阈值 .004，冲击槽仍下发；界面标签由“满配”改为“打击”。移除刚加的 `PROFILE_FLOOR`（地板回到 6，实测地板 3 反而把峰从 1.35 降到 1.23）。
+- 验证：65 项测试通过（新增 `test_full_profile_is_two_bands_with_short_windows_for_punch`）。
+
+---
+
+**Wolverine DS5 · 2026-10-29（满配试点档：三条带 + 冲击槽 + 弱帧地板）**
+
+- 目的：单出一档 `full`（界面“满配”）做试点，把 T1 协议里还没用上的东西一次用上；其余五档（旧版/受控/平衡/平衡+/动态）参数不动，同一个包里直接 A/B。
+- 三条带：编码器确实接受 3 条带（解码后 `raw_bands=3`），但带音量决定死活——100–200 Hz 给 0.2、200–400 Hz 给 0.05 时，250 Hz/8% 输出为 0；改成 0.6 / 0.3 后 150 Hz/8% → 11.2、250 Hz → 4.5、350 Hz → 3.3。EQ 在 200/400 Hz 只做 .8/.6 的轻度衰减。
+- 弱帧地板：200–400 带多数帧只有 5 级左右，被 `MIN_TOTAL=6` 整段清零；满配档单独把地板降到 3（`PROFILE_FLOOR`），实测 250 Hz/8% 0→4.1、350 Hz 0→3.2、150 Hz 9.4。
+- 冲击槽：`pack_frame` 以前恒写 0；现在满配档保留编码器给出的槽位（每侧最多 2 个，幅度按补偿缩放），其余档仍丢弃。离线 pack→decode 往返值一致；设备端是否真的渲染冲击槽还没实机确认，本次只验证到帧格式。
+- 覆盖（8 频率 × 5 幅度，游戏常见 1–8%）：满配 26/40 有声格子，平衡+ 17、平衡 13、旧版 9、受控 7、动态 7。
+- 界面六段按钮（46 宽、间距 5），1180 与 980 两种窗口宽度的真实渲染截图均无溢出。
+- 验证：`test_sensa_multiband`、`test_settings`、`app/test_ui_model` 共 65 项通过。
+
+---
+
+**Wolverine DS5 · 2026-10-29（档位切换日志 + 各档信息量实测）**
+
+- 桥接日志新增一行档位记录：启动与每次实际切换各打印 `PCM 档位：<name>`（切换时带 `（从 <old> 切换）`），此后“某档不对”可以直接对时间。
+- 覆盖实测（`work/probe_coverage.py`，8 个频率 × 5 个幅度，游戏常见满幅 1–8%，grip_gain 0.8，真 DLL）：40 个格子里“至少有一帧出输出”的数量——平衡+ 17、平衡 13、旧版 9、受控（调音后）7、动态 7。
+- 起振幅度（65Hz）：平衡+ 2%、平衡 3%、受控 5%、动态 5%（5% 时仅 10% 帧有声）、旧版 8%。频率上限：旧版 400Hz（但要很响）、动态标称 200Hz（实测 150Hz/8% 仍为 0）、平衡/平衡+ 150Hz、受控 130Hz。
+- 结论：用户报告的“动态缺失”不是错觉——它是当前五档里对常见幅度覆盖最差的两个之一；若只想“不缺”，平衡+ 覆盖最广。动态要追平，参数已量好（低频段 0.3→0.8、中频段 0.1→0.2；实测 65Hz 8% 时 4.9→16.1、150Hz 8% 时 0→4.8），待确认后再改。
+
+---
+
+**Wolverine DS5 · 2026-10-29（修复：动态档的冲击槽把整条握把输出打断）**
+
+- 现象：实机日志 20:45:51–20:47:25 共 37 条 `grip_error: PCM 编码帧不符合当前候选 profile`，约每秒一条：输出线程关闭 → 1 秒后重开，期间握把完全没有输出，听感是“断断续续、都变奇怪了”。
+- 根因：`compose_frame` 把“带冲击槽的帧”判为非法。雷蛇“动态”档 `transients.volume = 1`，强起音时编码器会写冲击槽；而 `pack_frame` 只有持续频带通道，冲击槽本来就下发不了。其余档位 `transients.volume = 0`，所以只有动态会触发。
+- 修复：冲击槽清零后继续合成（不再判非法）；时长不对的帧改为计数跳过，不再让整条输出线程重启。两类情况第一次出现各打一行日志（`transient_slots` / `rejected_frames`）作为可查证据。
+- 测试：新增 `test_transient_slots_are_dropped_instead_of_killing_the_output`、`test_frames_with_the_wrong_duration_are_skipped_not_fatal`；`test_sensa_multiband`、`test_settings`、`app/test_ui_model` 共 61 项通过。
+- 教训：离线合成信号（单频、点击）没有触发雷蛇的冲击检测，只有真实游戏音频才会；判断“某一档缺失”时应先看桥接日志里的 `grip_error`，再怀疑调音。
+
+---
+
+**Wolverine DS5 · 2026-10-29（修复：平衡+ 点了没反应）**
+
+- 现象：五档界面里“平衡+”点不动。原因：`UiModel.setHapticProfile` 另有一份硬编码档位白名单（四档），新增 `balanced_plus` 后点击被静默丢弃，界面因此没有任何反馈。
+- 修复：白名单改为引用 `settings.PROFILES`，不再在界面层重复维护档位列表；新增 `app/test_ui_model.py`，逐档断言点击都会下发设置、未知值被忽略。
+- 教训：档位这类枚举在两处各写一份，新增第三/第五项时必然漏一处；界面层只做转发，合法性交给 `Settings.__post_init__` 或单一来源。
+- 验证：`app/test_ui_model.py`、`test_settings`、`test_sensa_multiband` 共 59 项通过；候选包重打。
+
+---
+
+**Wolverine DS5 · 2026-10-29（平衡+ 与受控改调：先保信息，再谈轻重）**
+
+- 用户反馈受控“太弱，没特色”。实测（`work/probe_controlled_variants.py`，只读编码器）：受控在游戏常见的满幅 1–8% 触觉下输出恒为 0（65Hz 8% = 0；130Hz 要到 15% 才出 0.9），根因是阈值 0.03 加松压缩（0.5/0.5/γ3），不是桥接链路问题。单独抬高频带音量或降低阈值都几乎无效，换压缩器效果最大。
+- 受控改为“轻柔”档：保留 30–130→30–80 窄带与高频衰减；阈值 0.03→0.01、100Hz 以上 EQ 0.3→0.5、压缩器换成 0.25/0.3/γ5。改后 65Hz 5%→4.7、8%→9.3、15%→16.9（平衡同条件 9.9 / 16.4 / 22.8），约为平衡的 55%，仍有事件可感知。
+- 新增 `balanced_plus`（界面“平衡+”）：平衡原样，只把检测阈值 0.01→0.004；游戏常见 2% 触觉从“恒 0”变成能出 3.3，3–5% 提高约 20–50%。
+- 归属：雷蛇原文保留在 `game_profile()`，调音集中在 `pcm_encoder.TUNING` / `tuned_profile()`，无调音项的档位与原文逐字段一致（有测试守住）。
+- 界面档位由四段改五段（按钮 50 宽、字号 11）；真实平台渲染截图 `output/frontend-qa/status-profile-row-5-v1.png` 与 `-min-v1.png` 确认 1180 与 980 宽度下都不溢出。
+- 验证：`test_settings`、`test_sensa_multiband` 57 项通过。
+
+---
+
+**Wolverine DS5 · 2026-10-29（动态档电平补偿：弱段被整段清零）**
+
+- 用户 A/B 结果：平衡最合意（有旧版的层次、没有旧版的刺手感）；动态也不错，但“缺失震动”。
+- 离线测量（真 DLL，`work/probe_transients.py`，只读编码器）：同一段音频下动态档的频带幅度只有平衡的 38%（65Hz 稳态 48 vs 126），游戏式混合信号合成均值 96 vs 256；动态的弱帧多数落进 `compose_frame` 的 `MIN_TOTAL=6` 地板被整段清零。四档都不产生冲击槽、`compose_rejected=0`，所以不是编码帧被拒或线程崩溃，而是档位本身电平低 + 地板偏硬。
+- 改动：`sensa_multiband.PROFILE_GAIN` 给动态档后级 2.0× 补偿（编码器预设仍是雷蛇原文）。补偿后 65Hz 与平衡持平（合成均值 255.8 vs 256），混合信号 96→192；强段仍受 `MAX_AMPLITUDE=32` 限制。
+- 验证：53 项测试通过，新增 `test_dynamic_profile_makes_up_its_quieter_low_band`（同时守住 32 级上限）；候选包重打，界面与档位不变。
+
+---
+
+**Wolverine DS5 · 2026-10-29（触觉配置文件三档 + 旧版对照）**
+
+- 从本机 Synapse `RzAudioCapture.log` 的 `CA2HDevice::SetProfile` 抓到雷蛇「音频到触觉」三档预设原文（受控／最佳平衡／动态），写入 [pcm_encoder.py](../pcm_encoder.py) 的 `game_profile(name)`；原双频带 profile 保留为 `legacy` 供 A/B。
+- 三档差别：受控 30–130→30–80、阈值 0.03、100Hz 以上 EQ 0.3；最佳平衡 30–150→30–100、阈值 0.01、低频 EQ 2 倍；动态双频带 30–100/100–200、阈值 0.005、瞬态开启、压缩 0.25/0.3/γ5。
+- 新增设置 `haptic_profile`（默认 legacy），界面「握把震动」卡片加四段选择；运行中切换由 `PcmEncoder.set_profile()` 重设编码器，`MultibandGrips` 每批比对设置并只下发一次。
+- 验证：`test_settings`、`test_sensa_multiband` 52 项通过；全仓 400 通过，13 项离线 HAR 用例因本机 HAR 校验不匹配失败（与本次无关）；真 DLL 上四档均产出 40ms 帧（动态 2 频带，受控/平衡 1 频带）。界面用离屏渲染截图确认布局。
+- 注意：该设置只在多频候选（`multiband.enabled` / `WOLVERINE_MULTIBAND=1`）生效；普通 PC 路径仍走单频 `SensaGrips`。
+
+---
+
+**Wolverine DS5 · 2026-10-25（真实游戏：输入修复，握把触觉音频通道未通）**
+
+- 首次在真实游戏（蜘蛛侠 2，非 Steam exe）验证 Xbox 模式。发现并修复 capture 的一个传输层缺陷：usbip-win2 在 Windows 本地完成 SET_CONFIGURATION、不通过 USB/IP 发送该请求，而 VIIPER 服务器要求“配置已选中”才服务端点，导致虚拟 DS5 的所有非零端点请求被 errPipe 拒绝。输入因此完全不可用（HID 枚举正常但零输入报告）。
+- 修复：`internal/server/usb/config.go` 增加 `AssumeConfiguredEndpoints`（默认关闭，保持上游语义），capture 启动时开启；`server.go` 的端点活跃判定在开启时跳过配置判据。新增 Go 测试；`internal/server/usb`、`device/dualsense`、`cmd/wolverine-capture` 三包测试通过。重建 capture 后输入恢复（HID 直读约 230–960 Hz，注入状态正确）。
+- 发现虚拟 DS5 的输入端点修复后，游戏能识别并操作，但**握把无震动**。日志证据：游戏只发扳机 HID 效果（0x21 阻力曲线、0x26 弱脉冲 1/7 强度 180Hz），`haptic_audio_frames` 始终为 0，输出报文里传统震动字节全为 0。用 4 声道 WAV 直接向虚拟 DS5 的活跃渲染端点播放（pycaw 切换默认设备，测后恢复），capture 仍收 0 帧 → **虚拟 DS5 的音频流端点不可用**，与现代游戏的握把触觉通道无关。
+- 待办：音频流端点位于 alt setting 1/2，usbip-win2 同样不发送 SET_INTERFACE，服务器按 alt 0 匹配导致语音端点请求被拒。下一步给 capture 的提交路径加诊断、确认 alt 语义并修复，用 4 声道 WAV 离线验证（无需游戏），再进真实游戏并录制扳机/握把数据。
+- 打包：候选 1.1.1（含上述 capture 修复与 1.1.0 多频握把），`tools/build_candidate.py` 新增 `--allow-asset`（显式放行的包内二进制仍要求与仓库文件一致），构建校验通过。
+
+---
+
+**Wolverine DS5 · 2026-10-24（Xbox 握把升级为双频带多频管线）**
+
+- 用户反馈私有 Sensa 的握把仍是旧 Xbox 单频不对称手感；根因是 Xbox 桥接的握把走包络单频，PC 模式的多频管线没接过来。
+- 先尝试复用雷蛇 PCM 编码器（本机 DLL 接受 `xbox-sensa-device.json`，能稳定输出 29 字节帧），但其帧格式带内部压缩器状态、同输入相邻两次输出都不同，变长结构无法可靠解码，且该格式从未在私有通道上被硬件验证——放弃直接发送，改为自研分析（[xbox_multiband.py](../xbox_multiband.py)）：4096 点 Hann 滑窗 FFT + 4×补零，每侧输出（5–80Hz 主频、84–400Hz 纹理）两个独立（幅度, 频率）；84Hz 下沿是为避开 60Hz 主瓣泄漏。compose/整形从 `sensa_multiband` 移植：增益、经典震动接管（50Hz）、grip_soft 频段衰减与高频压制、弱低频抬升、总量上限、稳频（FrequencyHold）、稳幅（LevelHold）。
+- 关键结构结论（HAR 差分探针，`work/xbox_slot_layout.py`）：Xbox 私有帧每 part 55 位步进，频带块 = present + 2 点 ×（6 位幅度 + 7 位频率）；同 part 挂两个不同频率的效果会落到同一块的两个点，幅度/频率各自独立——双频带体验因此可达。HAR 按效果频率路由，与创建顺序无关。
+- 接线：`SensaStream` 内置 `PcmMailbox`（复用 PC 的邮箱），`_render_bands` 在直播音频存在时用多频管线、断流时回退已实机认可的包络单频；`GripHaptics.pcm` 改鸭子类型让 Xbox 流复用同一 accept/step 路径。编码器固定 6 效果槽（每侧 2 频带 + 2 扳机），首轮全建保证帧布局稳定。
+- 验证：新增 `test_xbox_multiband`（16 项）与多频流测试；全仓 338 项通过；`work/xbox_multiband_smoke.py` 用真 HAR 走完 3 秒合成音频全链路（左手 60+200Hz 双频带、右手 60Hz、扳机同帧、停止干净）。
+- 真机验收（2026-10-24）：`work/xbox_private_e2e.py` 430 帧全部 ACK、无 stall；左手双频带（60Hz 0.254 + 200Hz 0.143）、右手单频对照。用户确认：左右手感“明显不同，比之前好多了”，扳机“没变化”（保持既有体验）。
+
+---
+
 **Wolverine DS5 · 2026-10-14**
 
 把 Razer Wolverine V3 Pro 呈现为虚拟 DualSense。**主路线是 PC 模式**：游戏的 DS5 触觉经雷蛇 Sensa 输出到左右握把，两侧对称，没有扳机震动。**Xbox 模式是备选**：四个马达都可用，含扳机，但左右握把手感不对称。托盘程序按手柄当前模式自动选择桥接。
@@ -213,6 +346,16 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - 修复：马达字节改为 `round(value*255)`，校验范围放宽到 0..1；新增满量程断言。扳机与握把四通道位置不变。
 - 验证：`test_xusb_output.py` 等 100 项通过。真机强度/层次待确认；若全量程过强可再引入用户可调上限。
 
+**Wolverine DS5 · 2026-10-24（Xbox 模式改用私有 Sensa 同帧驱动四个马达）**
+
+- 实机确认 Xbox 模式的私有 16/0E 流能在同一帧里独立驱动 4 个马达并带频率。探测依次只发握把（216/116）、只发扳机（249/149，20/80/180Hz）、左右分开发、四马达同帧：592 帧全部收到 0x10 ack，用户确认每段手感都对、频率可分辨、左右可分辨。记录见 `validation/xbox-private-triggers-20261024.json`。
+- 依据是设备元数据的差别：Xbox 模式 `xbox-sensa-device.json` 有 4 个 bodypart（握把 20–300Hz、扳机 0–300Hz 共振 20Hz），PC 模式 `sensa-device.json` 只有 2 个（握把 30–400Hz）。所以「PC 级握把 + 扳机可控」只能在 Xbox 模式成立。
+- 代码变更：[xbox_sensa.py](xbox_sensa.py) 的 `set_triggers` 改成收 `(幅度, 频率)` 成对参数并夹到 0–300Hz，`XboxEncoder.frame` 去掉单独的 `trigger_hz`；[xbox_sensa_bridge.py](xbox_sensa_bridge.py) 的 `Triggers` 在私有流在场时把扳机写进同一帧、不再发 GIP 0x0F，双通道互相覆盖的 `refresh` 补偿随之删除，只保留「关掉扳机震动当拍就停」的 `stop_now`；`XboxHaptics.step` 先算扳机再渲染握把，避免扳机落后一个渲染周期（代价是仪表镜像的握把值晚一拍，已在测试里断言下一拍归零）。
+- 扳机载波：`TriggerPair(tone=True)` 时不再用幅度门控模拟 20Hz 以下的节奏，改为把 DS5 0x26 效果自带的频率直接交给执行器；20Hz 以上的载波此前被显式降级成持续震动。
+- 默认路线：`gip_bridge.select_serve()` 在 `xbox_sensa.available()`（64 位 + HAR.dll 校验和匹配）时默认走私有四马达，`WOLVERINE_XBOX_SENSA=0` 强制回到旧的 GIP 扳机路线；HAR 是专有二进制、不随包分发，缺失的机器自动回退。spec 已补 `xbox_sensa`/`xbox_sensa_bridge` 的延迟导入。
+- 排查中确认的两个环境事实：强制换 WinUSB 之后必须拔插一次，否则 `CreateFile` 成功但 `WinUsb_Initialize` 返回 ERROR_INVALID_FUNCTION(1)、pyusb 表现为 claim Access denied；GIP 握手偶发被设备拒绝（auth step 0x05），重开即成功。提权运行、停 Microsoft GameInput、HidHide 都与占用无关（HidHide 当时为 inactive、隐藏名单为空）。
+- 验证：319 项单元测试通过（含用真 HAR 的 `NativeEncoderTests`）。真机端到端（游戏 → 虚拟 DS5 → 私有四马达）待跑。
+
 **来源与构建**
 
 - VIIPER 基于 `hbashton/VIIPER@b78e31e93e84b4cb7c4b4c15b8aace10749106d2`，修改位于 `device/dualsense/raw_haptics_capture*`、`device/dualsense/device.go` 和 `cmd/wolverine-capture/`。源码包保留 GPLv3 许可证。解压后在 `VIIPER/` 使用 Go 1.26.2 执行 `go build -o ../wolverine-capture.exe ./cmd/wolverine-capture`。上游另有一个用于扩展 E2E 的 SDL 子模块，源码包记录其固定提交而不内嵌；当前接收程序的构建不依赖该子模块。
@@ -223,3 +366,135 @@ USB/IP 0.9.8.1 已按用户授权安装。安装包哈希与官方 release 一�
 - `sensa-device.json` 来自本机 Sage T1 历史服务元数据，仅用于离线构造，不能当成每次运行时的设备探测。
 
 旧 `manifest.json` 是早期原型打包时的快照，不能用于校验之后的代码。
+
+**Wolverine DS5 · 2026-10-25（QML 界面 1.1.5 候选）**
+
+- 界面从 qfluentwidgets 三页改为 Qt Quick：`ui/main.qml` + 状态/震动/系统三页，Python `app/ui_model.py` 暴露状态、电平、设置，`app/qml_window.py` 管窗口生命周期和托盘；窗口 1180×780、无边框、可拖拽/最大化/最小化/右下缩放，关闭默认收进托盘。
+- 视觉按雷云 4 的深灰 + 雷蛇绿：顶部 Tab 胶囊、绿色卡片标题、点阵背景、官方 Wolverine V3 Pro 手柄渲染 + 左右握把标注线；扳机与 Xbox 驱动入口不出现。
+- 动效：Tab 胶囊滑动、页面淡入、电平/输出柱缓动、连接点脉冲、滑杆脉冲、Toast；新增 `reduce_motion` 设置（只影响界面动效）。
+- 验证：395 项测试 + 34 subtests 通过；`tools/build_candidate.py` 以 1.1.4 为基线构建 `dist/candidate-1.1.5`，package-check `passed=true`；打包 exe `--self-test` 报 `qml=True`、`OK`。
+- 未完成：安装包未重打；真实桌面拖拽/托盘/多显示器与长时间电平刷新待实测；官方手柄渲染图发布前需确认素材授权或替换自有素材。
+
+**Wolverine DS5 · 2026-10-25（1.1.6：删掉接管前检测，修字体清晰度）**
+
+- 删除 `_warn_conflicts` 及 HidHide 成功后的“重启 Steam/游戏”提示；不再在隐藏实体手柄后弹“可能和虚拟手柄抢信号”。底层枚举函数保留但不再被界面调用。
+- 字号整体上调：正文 11→12/13、卡片标题 14→16、电平/输出数字 20/25→22/27；灰度文字提亮（#8C→#AA、#9A→#B8、#D0→#E4），主文字 #F2；字体改回 Segoe UI，并调用 `QQuickWindow.setTextRenderType(NativeTextRendering)` 使用 Windows 原生字形。
+- 验证：395 项测试 + 34 subtests 通过；`dist/candidate-1.1.6` package-check passed；打包 `--self-test` qml=True；175% 缩放下真实窗口截图字重与边缘明显更实。
+- 未完成：安装包仍未重打；1.1.6 的桌面拖拽/托盘/多显示器待用户实测。
+
+**Wolverine DS5 · 2026-10-25（1.1.7：黑色显示框与字号/对比度）**
+
+- 卡片从 `#282828` 改为 `#161616`（比页面 `#1F1F1F` 更黑），描边 `#3A3A3A`；按钮/胶囊同步压暗，形成雷云式黑色显示框。
+- 正文字号再上调、灰色文字提亮，字体使用 Segoe UI + `NativeTextRendering`；卡片标题 16、正文 12/13、电平/输出数字 22/27。
+- 1.1.7 候选 `dist/candidate-1.1.7` package-check passed，打包自检 `qml=True`；真实 175% 缩放下截图确认字重与卡片对比度。
+- 事故：构建新候选时误删了仍在运行的 1.1.5 目录，缺失 `base_library.zip` 导致其退出时原生恢复失败并驻留；已从 1.1.6 包补齐缺失文件供其退出，后续不再覆盖运行中的包目录。
+
+**Wolverine DS5 · 2026-10-25（1.1.8：修复退出时 utf-8-sig 缺失）**
+
+- 现象：退出时原生恢复失败，提示 `unknown encoding: utf-8-sig`，程序按设计保留以便重试，表现为无法退出。
+- 根因：打包环境未收集 `encodings.utf_8_sig`，而 `core.run_elevated` 用 `Path.write_text(..., encoding="utf-8-sig")` 写 PowerShell 脚本。
+- 修复：改成直接写 UTF-8 BOM 字节（`b"\xef\xbb\xbf" + utf-8`），不再依赖该编解码器；spec 同时补 `encodings.utf_8_sig` 兜底。1.1.8 候选 package-check passed、自检 qml=True。
+
+**Wolverine DS5 · 2026-10-25（1.1.13：清理状态页说明文字与绿色悬停）**
+
+- 状态页删除“左右握把的大马达”“调整握把触觉的整体强度”“按雷蛇 profile 压低高频…”三条说明，以及输出卡片底部的两行注释和重复的“100% 增益”角标；设置行改为单行标题 + 右侧控件，测试按钮收进“震动测试”行。
+- 四状态条改为 `#191919` 实底、1px 描边，文字 11→13px、标签提亮到 `#E4E4E4`、状态值白色加粗；手柄左侧说明同步改为 13px，并把 Python 状态文案缩短为“PC 模式：震动经 Sensa 输出到左右握把”，避免最小窗口 980px 下尾字换行。
+- 移除卡片、Tab、停止桥接、测试、日志按钮的绿色 hover 底色/描边与 140–160ms 颜色动画，以及手柄图的 hover 缩放；可点击元素只保留指针形状。
+- 输出柱宽度 44→56、标签 11→12px；关于卡片删除重复的“当前：…”状态行，系统设置说明做轻度压缩。
+- 验证：398 项测试 + 34 subtests 通过；`dist/candidate-1.1.13` package-check `passed=true`；打包自检 `qml=True`、`OK`；离屏 QML 渲染 1180×780 与最小 980×760 两档截图，最小宽度下无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.14：标题栏品牌与系统页减项）**
+
+- 标题栏文案从“WOLVERINE / DS5”改为“Wolverine to DS5”；左侧绿色 W 方块换成用户提供的绿色手柄图形 `ui/assets/brand-gamepad.png`（透明底、4 倍、颜色统一到 `#44D62C`）。
+- 系统页删除“减少动画”整行及开关；`reduce_motion` 仍作为内部设置保留（默认关闭），页面过渡继续尊重它，但界面不再暴露。
+- 验证：398 项测试 + 34 subtests 通过；`dist/candidate-1.1.14` package-check `passed=true`；打包自检 `qml=True`、`OK`；175% 原生截图确认标题栏图标与文案。
+
+**Wolverine DS5 · 2026-10-25（1.1.15：删除关于卡片，压低电平绿）**
+
+- 删除系统页“关于”卡片（版本与说明），系统页只保留设置卡片，按内容高度顶部对齐。
+- 对照 Synapse 4 参考截图采样：品牌主绿仍是 `#44D62C`，与参考一致；大面积“实时输出”电平柱改用暗一档的 `#35A827`，降低整块高亮，Tab/开关/滑杆保持原绿色。
+- 验证：398 项测试 + 34 subtests 通过；`dist/candidate-1.1.15` package-check `passed=true`；打包自检 `qml=True`、`OK`；1180×780 与最小 980×760 两档离屏截图确认无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.16：系统页四行等高铺满）**
+
+- 1.1.15 删除关于卡片后，系统卡片按内容高度顶部对齐会在下方留下大块点阵空白；改为设置卡片填满内容区，四个 SettingRow 等分高度，保持分隔线与控件右对齐。
+- 验证：398 项测试 + 34 subtests 通过；`dist/candidate-1.1.16` package-check `passed=true`；打包自检 `qml=True`、`OK`；1180×780 与最小 980×760 两档截图确认无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.17：应用名称统一）**
+
+- 标题栏文案改为“Wolverine to DS5”，左侧 W 方块换成用户提供的手柄图形；右下状态栏、窗口标题、托盘提示/通知，以及 exe 的 ProductName/FileDescription 同步改为“Wolverine to DS5”。
+- 验证：`dist/candidate-1.1.17` package-check `passed=true`；版本元数据 1.1.17。
+
+**Wolverine DS5 · 2026-10-25（1.1.19：左右握把独立强度与点击联动）**
+
+- 设置新增 `grip_gain_left` / `grip_gain_right`（0–150%），旧 `grip_gain` 自动迁移到两侧；PC、Sensa、Xbox 私有流与 GIP 四条路径都按左右分别乘增益。
+- 状态页改为“总开关 / 左握把强度 / 右握把强度 / 柔和 / 测试”五行（行高 44）；总开关关闭时两条强度、柔和、测试和手柄标注一起禁用变灰。
+- 手柄图左右标注显示实时百分比（如“左握把 100%”），点击选中对应侧；下方对应强度行左侧亮绿色细条、标注加粗并下划线，不弹窗、不滚动。滑杆 0% 即该侧关闭。
+- 两页正文改用 RazerF5（从本机 Synapse 4 提取 Regular/SemiBold），白字降到 `#D0D0D0` / `#C8C8C8` / `#E0E0E0`；RazerF5 为专有字体，分发前需确认授权。
+- 验证：404 项测试 + 34 subtests 通过；`dist/candidate-1.1.19` package-check `passed=true`；打包自检 `qml=True`、`OK`；1180×780 与最小 980×760 截图，并检查左侧选中 / 总开关关闭两种状态。
+
+**Wolverine DS5 · 2026-10-25（1.1.20：总开关关闭时结束测试）**
+
+- 总开关关闭时如果握把测试仍在运行，主动发送结束测试，避免测试按钮被禁用后无法停止。
+- 验证：404 项测试 + 34 subtests 通过；`dist/candidate-1.1.20` package-check `passed=true`；打包自检 `qml=True`、`OK`；实际鼠标点击手柄左右标注可把选中侧从 -1 切到 0/1。
+
+**Wolverine DS5 · 2026-10-25（1.1.21：修正旧增益迁移）**
+
+- 旧 `grip_gain` 只在左右字段缺失时迁移；显式设置 100% 不再被旧单旋钮值覆盖，避免老配置用户无法把两侧调回满强度。
+- 验证：405 项测试 + 34 subtests 通过；`dist/candidate-1.1.21` package-check `passed=true`；打包自检 `qml=True`、`OK`。
+
+**Wolverine DS5 · 2026-10-25（1.1.22：字体加大加粗）**
+
+- 正文、状态、按钮改用 Roboto（Regular/Medium/Bold），卡片标题保留 RazerF5 SemiBold；设置标题 14→15px 并加粗、状态条 13→14px、卡片标题 16→17px、输出数字 27→28px、按钮/页脚 +1px，白色文字提亮到 `#D8D8D8` / `#E8E8E8`。
+- 状态条高度 38→40px；总开关关闭时滑杆、数值块改灰并隐藏脉冲，避免“关了还像开着”。
+- 验证：405 项测试 + 34 subtests 通过；`dist/candidate-1.1.22` package-check `passed=true`；打包自检 `qml=True`、`OK`；1180×780 与 980×760 截图确认无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.23：中文回退到雅黑）**
+
+- 根因：随包的 Roboto/RazerF5 只有拉丁字形，QML 里 `font.family: "Roboto"` 把中文交给 Qt 的平台回退，Windows 上落到宋体；宋体笔画细、带衬线，之前几轮调大调粗都只作用在拉丁字形上。用 `QTextLayout.glyphRuns()` 取证：`总开关` 解析到 `SimSun/Regular`；默认字体带上回退链后同一段文字解析到 `Microsoft YaHei UI/Bold`。
+- 修复：`app/qml_window.py` 新增 `install_ui_fonts()`，注册 Roboto 三个字重并把应用默认字体设成 `Roboto → Microsoft YaHei UI → Microsoft YaHei → Segoe UI`；QML 侧删掉全部 36 处 `font.family`（QML 6.12 的 font 值类型没有 `families` 属性，逐项写 family 会把回退链换成单一字体）。中文文案统一 600 字重（雅黑没有 Medium，500 会退回 Regular）；设置标题 15→16px、说明 13→14px、状态条 14→15px、卡片标题 17→18px、输出数字 28→30px、Tab 15→16px、按钮与 Toast +1px。
+- 回归测试：`app/test_app.py` 新增两条——应用默认字体必须带 `Microsoft YaHei UI` 回退；QML 文件不得再出现 `font.family`。
+- 验证：407 项测试 + 34 subtests 通过；`dist/candidate-1.1.23` package-check `passed=true`；打包自检 `qml=True`、`OK`；真实 Windows 平台渲染截图确认中文为雅黑粗体而非宋体，1180×780 与最小 980×760 均无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.24：握把强度改回单一滑块）**
+
+- 用户反馈左右分开调太麻烦，要求回到一个总强度；同时删掉手柄图上的“左握把 / 右握把”百分比标注。
+- 界面：状态页“左握把强度 / 右握把强度”两行合并为一行“握把强度”（0–150%），滑杆读写 `gripGainPercent`；`ui_model.setGripGain` 现在同时写 `grip_gain` 与左右两侧，桥接侧仍按左右分路计算，旧配置不缺字段。
+- 手柄图：`ControllerHero` 只剩产品图，删除左右标注、引线、定位点与脉冲动画，以及 `selectedGrip` / `gripSelected` 这套点击选中链路；`Placeholder` 去掉左右百分比属性。
+- 回归测试：新增 `test_one_grip_slider_drives_both_sides`（总强度写入必须同步两侧）。
+- 验证：408 项测试 + 34 subtests 通过；`dist/candidate-1.1.24` package-check `passed=true`；打包自检 `qml=True`、`OK`；1180×780 与最小 980×760 截图确认无截断。
+
+**Wolverine DS5 · 2026-10-25（1.1.25：PC 强度回到单一总增益）**
+
+- 用户实测发现同一份配置下 1.1.4 与 1.1.24 手感不同：1.1.4 的滑杆只写 `grip_gain`，桥接也只读它；1.1.24 的界面显示 `grip_gain`，桥接却读 `grip_gain_left/right`。两侧落后于滑杆时就会出现“界面显示 120、实际按 100 输出”的错位。
+- 修复：`pc_bridge.GripHaptics.mix` 改回 1.1.4 语义，左右都取 `settings.grip_gain`；`test_pc_bridge` 的左右独立用例改成“PC 只看总增益、左右字段不影响输出”。
+- 柔和握把保持代码默认关闭（`settings.py` 默认 False），用户配置也已改回关闭。
+- 验证：408 项测试 + 34 subtests 通过；`dist/candidate-1.1.25` package-check `passed=true`。
+
+**Wolverine DS5 · 2026-10-25（1.1.26：View + 右摇杆模拟触摸板滑动）**
+
+- 用户提出功能缺口：虚拟 DS5 只有触摸板“按下”，没有滑动/触点。方案定为“按住 View + 右摇杆当触点”，保留原来 View 轻点＝触摸板点击。
+- 实现：`sdl_input.input_state` 增加触摸合成——View 按住且右摇杆偏出死区（8000/32767≈24%）时，把右摇杆位置线性映射到 DS5 触摸板绝对坐标（中心 960×540，满偏 1919/1079），置 `Touch1Active`、`Touch1Tracking`，并跳过 View 的点击位，避免一次滑动被游戏当成按住点击。摇杆在死区内仍按点击处理。
+- 说明：坐标是绝对映射，摇杆居中即触点回到触摸板中心；capture 侧字段（`Touch1X/Y`、`Touch1Active`、`Touch1Tracking`）本来就支持，无需改 Go 端。
+- 验证：410 项测试 + 34 subtests 通过（新增 2 项触摸板用例）；`dist/candidate-1.1.26` package-check `passed=true`。
+
+**Wolverine DS5 · 2026-10-26（1.1.27：握把未就绪时的测试按钮提示 + 诊断补全）**
+
+- 测试反馈“软件内测试没震动”。对照诊断文件（`WolverineDS5-diagnostics-*.txt`）发现两个事实：① 应用启动后到雷云被拉起之间 `grips_ready=false`、`grip_error="No Sensa device; Razer Synapse must be running"`，这段窗口里测试按钮无输出；② 同一份日志里 `09:06:39`/`09:22:03` 出现过 `[[0.98,50]]`/`[[1,50]]`，说明就绪后测试确实有输出。
+- 修复（体验层，非 bug）：`gripReady` 从桥接状态透传到 `UiModel`，未就绪时“震动测试”按钮变灰并显示“等待雷云…”，下方提示“雷云还没识别到握把，此时测试不会有输出”，鼠标区域禁用。
+- 诊断增强：`app/log_export.py` 的导出文件新增 `--- bridge status ---`（含 `state`/`backend`/`grips_ready`/`grip_error`），以后反馈可直接看是否处在等待窗口。
+- 验证：410 项测试 + 34 subtests 通过；`dist/candidate-1.1.27` package-check `passed=true`；未就绪态渲染截图 `output/frontend-qa/qml-grip-not-ready.png`。
+
+**Wolverine DS5 · 2026-10-26（测试交付物：安装器、覆盖包、使用说明与恢复单）**
+
+- 安装器脚本 `installer/WolverineDS5.iss` 支持命令行指定版本与源目录（`/DAppVersion=1.1.27 /DAppSrc=..\dist\candidate-1.1.27\WolverineDS5`），`VersionInfoVersion` 由 `AppVersion` 推导；安装时随包附 `docs/TESTER_GUIDE.md`，开始菜单增加“使用说明”。
+- 产出 `dist/Wolverine-DS5-Setup-1.1.27.exe`（59.5 MB，SHA256 `ED26206095…`），本机静默安装→校验 exe 版本/文档/工具目录→静默卸载，无残留。
+- 免安装覆盖包 `dist/Wolverine-DS5-1.1.27-patch.zip`（13.3 MB）：只含 `WolverineDS5.exe`、`WolverineDS5-bridge.exe` 与两个改动的 QML，用于“不能重装”的测试机。
+- `docs/TESTER_GUIDE.md` 增补“刚打开应用握把要等 10–20 秒”与“测试没反应先看什么”。
+
+**Wolverine DS5 · 2026-10-26（测试机事故：360 清理导致 BCD 损坏，非本软件）**
+
+- 测试人员用 360 卸载时，提示“木马”后自动清理；随后重启键鼠全部失效，再重启变成 `0xc0000001` → 按恢复后变 `0xc0000098`（`\BCD` 无效），按 F1 回环。
+- 判断：第一次是 360 清掉了启动相关的驱动/未签名文件（`0xc0000001`）；第二次是启动修复找不到有效系统时重写 BCD 被打断，留下无操作系统的引导项（`0xc0000098`）。本软件不安装任何驱动，HidHide/USBip 为第三方且安装器校验哈希；`wolverine-capture.exe` 为无签名 Go 构建，是误报重点。
+- 处置文档：新增 `docs/RECOVERY_BCD.md`（U 盘进 WinRE → `bcdboot C:\Windows /s S: /f UEFI` 重建引导；含华硕 F8、VMD/RST 看不到硬盘、EFI 分区损坏等分支），可整篇转给测试人员或维修店。
+- 预防：安装说明与测试说明补充“把安装目录和 `wolverine-capture.exe` 加入杀软信任区；测试机不要点 360 的‘一键修复 / 开机加速 / 驱动清理’”。

@@ -142,15 +142,18 @@ def describe(running, wanted, status, mode):
     if not wanted:
         if mode is None:
             return "waiting", "正在检测手柄", ""
-        detail = "手柄当前是 Xbox 模式，可直接当 Xbox 手柄用" if mode == "xbox" else "已手动停止，可在托盘菜单启动"
+        detail = ("手柄当前是 Xbox 模式；握把震动只支持 PC 模式，请切到 PC 模式并重新插拔"
+                  if mode in ("xbox", "bridge") else "已手动停止，可在托盘菜单启动")
         return "stopped", "桥接已停止", detail
     if not running:
         return "error", "桥接异常退出", "正在自动重启，详情见日志"
     state = status.get("state")
     if state == "connected" and status.get("backend") == "sensa":
         if status.get("grips_ready") is False:
+            if status.get("synapse") == "offline":
+                return "waiting", "雷云离线，握把不可用", "输入正常；雷云没联网时不会加载手柄。请恢复网络后重启雷云 Synapse"
             return "waiting", "等待握把震动服务", "输入正常；正在等待雷云 Synapse 识别手柄，握把暂不可用"
-        return "connected", "已连接", "PC 模式：震动经雷蛇 Sensa 输出到左右握把，扳机马达不可用"
+        return "connected", "已连接", "PC 模式：震动经 Sensa 输出到左右握把"
     if state == "connected":
         return "connected", "已连接", f"握手 {status.get('handshake_s', 0)} 秒"
     if status.get("reason") == "sensa":
@@ -162,9 +165,9 @@ def describe(running, wanted, status, mode):
     if state == "lost":
         return "waiting", "手柄已断开", "重新插上即可恢复，游戏无需重启"
     if mode == "absent":
-        return "waiting", "等待手柄", "请用数据线连接手柄（PC 模式或 Xbox 模式均可）"
-    if mode == "xbox":
-        return "waiting", "等待手柄", "手柄仍是 Xbox 驱动，请在“设备”页切换到桥接模式"
+        return "waiting", "等待手柄", "请用数据线连接手柄（PC 模式）"
+    if mode in ("xbox", "bridge"):
+        return "waiting", "等待手柄", "手柄仍是 Xbox 模式；握把震动只支持 PC 模式，请切到 PC 模式并重新插拔"
     return "waiting", "等待手柄", "正在连接"
 
 
@@ -368,7 +371,9 @@ def run_elevated(script):
     from ctypes import wintypes
 
     path = data_dir() / "elevated.ps1"
-    path.write_text("$ErrorActionPreference = 'Stop'\n" + script, encoding="utf-8-sig")
+    # 直接写 UTF-8 BOM：打包环境缺少 encodings.utf_8_sig 时，write_text(..., "utf-8-sig")
+    # 会在退出恢复阶段抛 unknown encoding，导致程序无法退出。
+    path.write_bytes(b"\xef\xbb\xbf" + ("$ErrorActionPreference = 'Stop'\n" + script).encode("utf-8"))
 
     class ShellExecuteInfo(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND),

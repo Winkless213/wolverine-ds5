@@ -1,13 +1,23 @@
-"""按需记录游戏扳机报文与实体开度，沿用托盘日志，不参与震动映射。"""
+"""按需记录游戏扳机报文与实体开度，写入托盘日志目录，不参与震动映射。"""
 import json
+import os
 from pathlib import Path
+import time
+
+
+def log_path():
+    directory = Path(os.environ.get("LOCALAPPDATA", ".")) / "WolverineDS5" / "logs"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / time.strftime("trigger-trace-%Y%m%d-%H%M%S.jsonl")
 
 
 class TriggerTrace:
-    def __init__(self, flag=None, write=None, seconds=60):
+    def __init__(self, flag=None, write=None, seconds=None):
         self.flag = Path(flag) if flag else None
-        self.write = write or (lambda event: print(json.dumps(event), flush=True))
-        self.seconds = seconds
+        self.seconds = seconds if seconds is not None else float(
+            os.environ.get("WOLVERINE_TRIGGER_TRACE_SECONDS", 60))
+        self.path = None
+        self.write = write or self._write_file
         self.present = self.flag.is_file() if self.flag else False
         self.next_check = 0
         self.until = None
@@ -16,13 +26,21 @@ class TriggerTrace:
         self.last_sample = 0
         self.reports_seen = self.reports_changed = self.samples = 0
 
+    def _write_file(self, event):
+        # 桥接由托盘的隐藏窗口启动，stdout 收不到；录制一律落盘。
+        if self.path is None:
+            self.path = log_path()
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event) + "\n")
+
     def emit(self, event, now, **values):
         self.write({"type": "trigger-trace", "event": event, "monotonic_s": now, **values})
 
     def close(self, now, reason="device-detached"):
         if self.until is not None:
             self.emit("stop", now, reason=reason, reports_seen=self.reports_seen,
-                      reports_changed=self.reports_changed, samples=self.samples)
+                      reports_changed=self.reports_changed, samples=self.samples,
+                      path=str(self.path) if self.path else None)
             self.until = None
 
     def active(self, now):

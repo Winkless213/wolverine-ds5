@@ -8,10 +8,21 @@ from pathlib import Path
 import time
 
 from gip_host import rumble
+from sensa_multiband import PcmMailbox
 from sensa_offline import HAR_PATH, HAR_SHA256, OfflineSensa, Target
+from xbox_multiband import BandAnalyzer, LevelHold, FrequencyHold, QUIET_BANDS, compose_envelope
 
 PARTS = (216, 116, 249, 149)
 QUIET = [(0, 80), (0, 80)]
+# 扳机执行器 0–300Hz、共振 20Hz（xbox-sensa-device.json）；无频率信息时停在共振。
+TRIGGER_RESONANCE = 20
+TRIGGER_QUIET = ((0, TRIGGER_RESONANCE), (0, TRIGGER_RESONANCE))
+
+
+def available():
+    """HAR 是本机专有二进制、不随包分发：只在 64 位且校验和匹配时启用私有四马达输出。"""
+    return (c.sizeof(c.c_void_p) == 8 and HAR_PATH.is_file()
+            and hashlib.sha256(HAR_PATH.read_bytes()).hexdigest() == HAR_SHA256)
 
 
 def stream_packet(frame, sequence):
@@ -34,12 +45,12 @@ def trigger_packet(lt, rt):
 
 class XboxEncoder:
     def __init__(self):
-        if c.sizeof(c.c_void_p) != 8 or hashlib.sha256(HAR_PATH.read_bytes()).hexdigest() != HAR_SHA256:
+        if not available():
             raise RuntimeError("Xbox Sensa requires the verified x64 HAR build")
         self.search = os.add_dll_directory(str(HAR_PATH.parent))
         self.active = False
         self.engine = OfflineSensa.__new__(OfflineSensa)
-        self.effects = [None] * 4
+        self.effects = [None] * 6
         self.time = self.played = 0.0
         try:
             self.engine.dll = c.CDLL(str(HAR_PATH))
@@ -60,20 +71,29 @@ class XboxEncoder:
             self.close()
             raise
 
-    def frame(self, grips, triggers=(0, 0), trigger_hz=20):
+    # 6 个固定效果槽：左右握把各 2 频带 + 左右扳机；首轮全建，帧布局从此稳定。
+    GROUPS = (400, 400, 400, 400, 501, 501)
+    HANDS = (2, 2, 1, 1, 2, 1)
+
+    def frame(self, grips, triggers=TRIGGER_QUIET):
+        sides = [tuple(side) if side and isinstance(side[0], tuple) else (side,) for side in grips]
+        for side in sides:
+            if not 0 < len(side) <= 2:
+                raise ValueError("Xbox grips accept at most two bands per side")
         self.time += .02
-        for side, (amplitude, hz) in enumerate(list(grips) + [(value, trigger_hz) for value in triggers]):
+        slots = [side + ((0, 80),) * (2 - len(side)) for side in sides]
+        for slot, (amplitude, hz) in enumerate(sum(slots, ()) + tuple(triggers)):
             curve = (c.c_double * 6)(0, amplitude, 599.996, amplitude, 600, 0)
             pitch = (c.c_double * 4)(0, .5, 600, .5)
             args = (curve, 6, pitch, 4, hz, hz, None, 0, False)
-            effect = self.effects[side]
+            effect = self.effects[slot]
             if effect is None:
                 effect = self.engine.add(*args)
                 if effect < 0:
                     raise RuntimeError("HAR rejected Xbox grip effect")
-                self.effects[side] = effect
+                self.effects[slot] = effect
                 # 官方 BodyMapping：Palm=400、Index=501，左右食指末节是 249/149。
-                self.engine.target(effect, c.byref(Target(1, 400 if side < 2 else 501, 2 if side % 2 == 0 else 1)), 1)
+                self.engine.target(effect, c.byref(Target(1, self.GROUPS[slot], self.HANDS[slot])), 1)
                 self.engine.play(effect, -self.time, 0, 0)
             elif not self.engine.update(effect, *args):
                 raise RuntimeError("HAR rejected Xbox grip update")
@@ -107,8 +127,14 @@ class SensaStream:
         self.encoder = encoder if encoder is not None else XboxEncoder()
         self.transport = host.transport
         self.values = list(QUIET)
-        self.triggers = self.previous_triggers = (0, 0)
-        self.previous = None
+        self.triggers = self.previous_triggers = list(TRIGGER_QUIET)
+        self.bands = [QUIET_BANDS, QUIET_BANDS]
+        self.pcm = PcmMailbox()
+        self.analyzer = BandAnalyzer()
+        self.hold = FrequencyHold()
+        self.level = LevelHold()
+        self.epoch = None
+        self.previous_state = None
         self.last_write = None
         self.pending = {}
         self.accepted = self.sent = 0
@@ -135,34 +161,64 @@ class SensaStream:
             raise ValueError("Invalid Xbox grip parameters")
         self.values[side] = (amplitude, min(300, max(20, frequency))) if amplitude else (0, 80)
 
-    def _send(self, values, track=True):
-        frame = self.encoder.frame(values, self.triggers)
+    def _render_bands(self, values, now):
+        batch = self.pcm.take(now)
+        if batch.epoch != self.epoch:
+            if self.epoch is not None:
+                self.analyzer = BandAnalyzer()
+                self.hold.reset()
+                self.level.reset()
+            self.epoch = batch.epoch
+        if batch.pcm:
+            self.analyzer.push(batch.pcm)
+        if batch.last_audio is not None:
+            sides = compose_envelope(values, self.analyzer.render(), batch.state)
+        else:
+            # 没有直播音频时只保留 PC 包络的低频，避免 FFT 历史残影。
+            sides = compose_envelope(values, [QUIET_BANDS, QUIET_BANDS], batch.state)
+        if batch.state.settings.grip_soft:
+            sides = self.level.apply(self.hold.apply(sides))
+        return sides
+
+    def _send(self, values, now, track=True):
+        self.bands = self._render_bands(values, now)
+        frame = self.encoder.frame(self.bands, self.triggers)
         sequence = self.host._next_seq()
         self.transport.write(stream_packet(frame, sequence))
         self.sent += 1
         if track:
             self.pending[sequence] = self.clock()
-        self.previous, self.last_write = list(values), self.clock()
+        self.previous_state = (tuple(map(tuple, self.bands)), tuple(values), tuple(self.triggers))
+        self.last_write = now
         self.previous_triggers = self.triggers
 
-    def set_triggers(self, lt, rt):
-        if any(not math.isfinite(value) or not 0 <= value <= 1 for value in (lt, rt)):
-            raise ValueError("Invalid Xbox private trigger parameters")
-        self.triggers = (lt, rt)
+    def set_triggers(self, triggers):
+        pairs = tuple(triggers)
+        if len(pairs) != 2:
+            raise ValueError("Expected exactly two Xbox private trigger parameters")
+        for amplitude, frequency in pairs:
+            if not math.isfinite(amplitude) or not 0 <= amplitude <= 1 or not math.isfinite(frequency):
+                raise ValueError("Invalid Xbox private trigger parameters")
+        self.triggers = [(amplitude, min(300, max(0, frequency))) if amplitude
+                         else (0, TRIGGER_RESONANCE) for amplitude, frequency in pairs]
 
     def render(self):
         now = self.clock()
         if any(now - sent > .5 for sent in self.pending.values()):
             raise ConnectionError("Xbox Sensa stream reply timed out")
-        quiet = not any(value[0] for value in self.values) and not any(self.triggers)
-        if (self.previous is None or quiet and (self.values != self.previous or self.triggers != self.previous_triggers)
+        quiet = (not any(value[0] for value in self.values)
+                 and not any(pair[0] for pair in self.triggers))
+        changed = self.previous_state != (tuple(map(tuple, self.bands)), tuple(self.values), tuple(self.triggers))
+        if (self.previous_state is None or quiet and changed
                 or not quiet and now - self.last_write >= .02):
-            self._send(self.values)
+            self._send(self.values, now)
 
     def stop(self):
         self.values = list(QUIET)
-        self.triggers = (0, 0)
-        self._send(self.values, track=False)
+        self.triggers = list(TRIGGER_QUIET)
+        self.bands = [QUIET_BANDS, QUIET_BANDS]
+        self.pcm.pause()
+        self._send(self.values, self.clock(), track=False)
         self.pending.clear()
 
     def close(self):

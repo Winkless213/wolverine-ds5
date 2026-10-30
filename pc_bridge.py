@@ -272,7 +272,7 @@ class GripHaptics:
 
     @property
     def pcm(self):
-        return self.output.pcm if isinstance(self.output, SensaOutputWorker) else None
+        return getattr(self.output, "pcm", None)
 
     def clear_audio(self):
         if self.pcm is not None:
@@ -325,14 +325,17 @@ class GripHaptics:
             self.last_audio = now
 
     def mix(self, l2, r2):
-        gain = self.settings.grip_gain
+        # PC 模式沿用 1.1.4 的单增益语义：界面只有一个强度，左右取同一个值，
+        # 避免两侧字段意外漂移导致手感与界面不一致。
+        gains = (self.settings.grip_gain, self.settings.grip_gain)
         if self.test_target == "grip":
-            pairs = [(min(1, LIMIT * gain * pressure / 255), RUMBLE_HZ) for pressure in (l2, r2)]
+            pairs = [(min(1, LIMIT * gain * pressure / 255), RUMBLE_HZ)
+                     for gain, pressure in zip(gains, (l2, r2))]
         elif self.test_target is not None or not self.settings.grip_enabled:
             pairs = [QUIET, QUIET]
         else:
             pairs = []
-            for (amplitude, frequency), rumble in zip(self.audio, self.rumble):
+            for gain, (amplitude, frequency), rumble in zip(gains, self.audio, self.rumble):
                 if rumble * LIMIT > amplitude:
                     amplitude, frequency = rumble * LIMIT, RUMBLE_HZ
                 pairs.append((min(1, amplitude * gain), frequency))
@@ -361,7 +364,9 @@ class GripHaptics:
                                "nonzero_rumble_reports": self.nonzero_rumble_reports,
                                "selected": selected, "output": list(self.previous),
                                "test_target": self.test_target, "grip_enabled": self.settings.grip_enabled,
-                               "grip_gain": self.settings.grip_gain}, now)
+                               "grip_gain": self.settings.grip_gain,
+                               "grip_gain_left": self.settings.grip_gain_left,
+                               "grip_gain_right": self.settings.grip_gain_right}, now)
 
 
 class Devices:

@@ -19,7 +19,7 @@ def version_info(description):
             StringStruct("CompanyName", "Winkless213"),
             StringStruct("FileDescription", description),
             StringStruct("FileVersion", version),
-            StringStruct("ProductName", "Wolverine DS5"),
+            StringStruct("ProductName", "Wolverine to DS5"),
             StringStruct("ProductVersion", version),
         ])]),
         VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
@@ -34,6 +34,7 @@ datas = collect_data_files("qfluentwidgets") + collect_data_files("libusb_packag
     ("tools/*.ps1", "tools"),
     ("reference-licenses/SDL-zlib.txt", "licenses"),
     ("reference-licenses/*", "licenses"),
+    ("ui", "ui"),
 ]
 common = dict(pathex=["."], datas=datas, excludes=[
     "tkinter", "matplotlib", "PySide6.QtWebEngineCore",
@@ -42,16 +43,20 @@ common = dict(pathex=["."], datas=datas, excludes=[
     "IPython", "pytest",
 ])
 
-app = Analysis(["app/main.py"], **common)
+app = Analysis(["app/main.py"], hiddenimports=[
+    "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickControls2", "encodings.utf_8_sig",
+], **common)
 bridge = Analysis(["bridge_main.py"], hiddenimports=[
     "pc_bridge", "pycaw.pycaw", "pycaw.constants",
     # gip_host 在运行时才 import libusb_package/usb，PyInstaller 需要显式收集。
     "usb", "usb.core", "usb.util", "usb.backend.libusb1", "libusb_package",
+    # select_serve 运行时才决定走私有 Sensa 四马达还是 GIP 扳机，两者都是延迟导入。
+    "xbox_sensa", "xbox_sensa_bridge",
 ], **common)
 MERGE((app, "WolverineDS5", "WolverineDS5"), (bridge, "WolverineDS5-bridge", "WolverineDS5-bridge"))
 
 app_exe = EXE(PYZ(app.pure), app.scripts, [], exclude_binaries=True, name="WolverineDS5", console=False,
-              version=version_info("Wolverine DS5"))
+              version=version_info("Wolverine to DS5"))
 bridge_exe = EXE(PYZ(bridge.pure), bridge.scripts, [], exclude_binaries=True, name="WolverineDS5-bridge",
-                 console=True, version=version_info("Wolverine DS5 bridge"))
+                 console=True, version=version_info("Wolverine to DS5 bridge"))
 COLLECT(app_exe, app.binaries, app.datas, bridge_exe, bridge.binaries, bridge.datas, name="WolverineDS5")

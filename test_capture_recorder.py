@@ -35,6 +35,26 @@ class CaptureRecorderTests(unittest.TestCase):
             self.assertEqual(recorder.stats["stale_blocks"], 1)
             self.assertEqual(list(Path(folder).glob("*.wav")), [])
 
+    def test_backwards_jump_starts_new_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            recorder = CaptureRecorder(Path(folder))
+            recorder.accept(block(1, 0, b"\0" * 4))
+            recorder.next_frame = 100000
+            recorder.accept(block(1, 0, b"\0" * 4))
+            recorder.close()
+            self.assertEqual(recorder.stats["resyncs"], 1)
+            self.assertEqual(sorted(path.name for path in Path(folder).glob("*.wav")),
+                             ["synthetic-0001-r1.wav", "synthetic-0001.wav"])
+
+    def test_forward_gap_starts_new_file_instead_of_failing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            recorder = CaptureRecorder(Path(folder))
+            recorder.accept(block(1, 0, b"\0" * 4))
+            recorder.accept(block(1, 100000, b"\0" * 4))
+            recorder.close()
+            self.assertEqual(recorder.stats["resyncs"], 1)
+            self.assertEqual(len(list(Path(folder).glob("*.wav"))), 2)
+
     def test_bad_payload_never_becomes_valid_audio(self):
         with tempfile.TemporaryDirectory() as folder:
             recorder = CaptureRecorder(Path(folder))

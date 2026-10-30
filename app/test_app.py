@@ -8,13 +8,15 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 import settings
-from app import core
+from app import __version__, core
 from app.bridge import Bridge
 from app.main import App
 from app.window import draw_status_icon
@@ -75,10 +77,16 @@ class FakeSystem:
         self.hiding_calls = []
         self.hiding_code = 0
         self.synapse_calls = 0
+        self.grips = "ready"
+        self.grip_checks = 0
 
     def ensure_synapse(self):
         self.synapse_calls += 1
         return "running"
+
+    def diagnose_synapse(self):
+        self.grip_checks += 1
+        return self.grips
 
     def find_controller(self):
         return (self.instance, self.service) if self.service else (None, None)
@@ -111,7 +119,7 @@ class FakeSystem:
 
 
 class AppTests(unittest.TestCase):
-    def make_app(self, mode="bridge", saved=None):
+    def make_app(self, mode="pc", saved=None):
         directory = pathlib.Path(tempfile.mkdtemp())
         path = directory / "settings.json"
         if saved:
@@ -122,16 +130,57 @@ class AppTests(unittest.TestCase):
         self.addCleanup(app.close)
         return app, bridge, system, path
 
+    def test_qml_window_loads_and_has_the_model(self):
+        app, _, _, _ = self.make_app()
+        self.assertIsNotNone(app.window.root)
+        from app import __version__
+        self.assertEqual(app.model.version, __version__)
+
+    def test_default_font_keeps_the_chinese_fallback(self):
+        # 内置 Roboto 没有汉字字形；回退链丢了中文就会落到宋体，界面又细又糊。
+        self.make_app()
+        from PySide6.QtGui import QGuiApplication
+        families = QGuiApplication.font().families()
+        self.assertEqual(families[0], "Roboto")
+        self.assertIn("Microsoft YaHei UI", families)
+
+    def test_qml_files_do_not_override_the_font_family(self):
+        # QML 的 font 值类型没有 families 属性，任何 font.family 都会把回退链换成单一字体。
+        for path in (core.root_dir() / "ui").glob("*.qml"):
+            self.assertNotIn("font.family", path.read_text(encoding="utf-8"), path.name)
+
     def test_slider_change_reaches_the_bridge_and_is_saved(self):
         app, bridge, _, path = self.make_app()
-        app.window.vibration_page.grip_gain.slider.setValue(40)
+        app.model.setGripGain(40)
         self.assertEqual(json.loads(bridge.sent[-1])["settings"]["grip_gain"], .4)
         app.flush_save()
         self.assertEqual(settings.load(path).grip_gain, .4)
 
+    def test_one_grip_slider_drives_both_sides(self):
+        # 界面只保留一个总强度；左右分路仍由桥接计算，两者必须同步。
+        app, bridge, _, path = self.make_app()
+        app.model.setGripGainLeft(100)
+        app.model.setGripGainRight(100)
+        app.model.setGripGain(40)
+        sent = json.loads(bridge.sent[-1])["settings"]
+        self.assertEqual((sent["grip_gain"], sent["grip_gain_left"], sent["grip_gain_right"]), (.4, .4, .4))
+        app.flush_save()
+        saved = settings.load(path)
+        self.assertEqual((saved.grip_gain_left, saved.grip_gain_right), (.4, .4))
+
+    def test_per_side_sliders_reach_the_bridge_and_are_saved(self):
+        app, bridge, _, path = self.make_app()
+        app.model.setGripGainLeft(40)
+        app.model.setGripGainRight(120)
+        sent = json.loads(bridge.sent[-1])["settings"]
+        self.assertEqual((sent["grip_gain_left"], sent["grip_gain_right"]), (.4, 1.2))
+        app.flush_save()
+        saved = settings.load(path)
+        self.assertEqual((saved.grip_gain_left, saved.grip_gain_right), (.4, 1.2))
+
     def test_soft_grip_switch_reaches_the_bridge_and_is_saved(self):
         app, bridge, _, path = self.make_app()
-        app.window.vibration_page.grip_soft.switch.setChecked(True)
+        app.model.setGripSoft(True)
         self.assertTrue(json.loads(bridge.sent[-1])["settings"]["grip_soft"])
         app.flush_save()
         self.assertTrue(settings.load(path).grip_soft)
@@ -139,11 +188,14 @@ class AppTests(unittest.TestCase):
     def test_xbox_mode_at_startup_does_not_start_the_bridge(self):
         app, bridge, _, _ = self.make_app(mode="xbox")
         self.assertEqual(bridge.started, 0)
-        self.assertEqual(app.window.status_page.title.text(), "桥接已停止")
+        self.assertEqual(app.model.statusTitle, "桥接已停止")
+        self.assertIn("PC 模式", app.model.statusDetail)
 
-    def test_bridge_mode_at_startup_starts_the_bridge(self):
-        _, bridge, _, _ = self.make_app(mode="bridge")
-        self.assertEqual(bridge.started, 1)
+    def test_xbox_bridge_mode_at_startup_does_not_start_the_bridge(self):
+        app, bridge, _, _ = self.make_app(mode="bridge")
+        self.assertEqual(bridge.started, 0)
+        self.assertEqual(app.model.statusTitle, "桥接已停止")
+        self.assertIn("PC 模式", app.model.statusDetail)
 
     def test_disconnect_and_reconnect_notify_once_each(self):
         app, bridge, _, _ = self.make_app()
@@ -152,7 +204,7 @@ class AppTests(unittest.TestCase):
         for state in ("waiting", "handshake", "connected", "lost", "waiting", "connected"):
             bridge.status.emit({"type": "status", "state": state})
         self.assertEqual(notes, ["connected", "lost", "reconnected"])
-        self.assertEqual(app.window.status_page.title.text(), "已连接")
+        self.assertEqual(app.model.statusTitle, "已连接")
 
     def test_bridge_exit_while_connected_counts_as_lost_and_restarts(self):
         app, bridge, _, _ = self.make_app()
@@ -163,50 +215,58 @@ class AppTests(unittest.TestCase):
         self.assertEqual(notes, ["connected", "lost"])
         self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
 
-    def test_grip_and_trigger_tests_are_exclusive(self):
+    def test_grip_test_toggles(self):
         app, bridge, _, _ = self.make_app()
         bridge.status.emit({"type": "status", "state": "connected"})
-        page = app.window.vibration_page
-        page.grip_test.button.click()
-        page.trigger_test.button.click()
-        page.trigger_test.button.click()
-        self.assertEqual([json.loads(line)["target"] for line in bridge.sent], ["grip", "trigger", None])
-        self.assertEqual(page.grip_test.button.text(), "开始测试")
+        app.model.requestTest()
+        app.model.requestTest()
+        self.assertEqual([json.loads(line)["target"] for line in bridge.sent], ["grip", None])
+        self.assertEqual(app.model.testing, "")
 
     def test_test_needs_a_connection_and_ends_on_disconnect(self):
         app, bridge, _, _ = self.make_app()
-        page = app.window.vibration_page
-        self.assertFalse(page.grip_test.button.isEnabled())
+        self.assertFalse(app.model.testable)
+        app.model.requestTest()
+        self.assertEqual(bridge.sent, [])
         bridge.status.emit({"type": "status", "state": "connected"})
-        page.grip_test.button.click()
+        app.model.requestTest()
         bridge.status.emit({"type": "status", "state": "lost"})
         self.assertEqual(json.loads(bridge.sent[-1]), {"type": "test", "target": None})
-        self.assertFalse(page.grip_test.button.isEnabled())
+        self.assertFalse(app.model.testable)
 
     def test_meter_updates_the_motor_bars(self):
         app, bridge, _, _ = self.make_app()
-        app.window.show()
         bridge.status.emit({"type": "status", "state": "connected"})
         bridge.meter.emit({"type": "meter", "motors": [.5, 0, 1, 0], "l2": 0, "r2": 255, "buttons": 0, "dpad": 0,
                            "sticks": [0, 0, 0, 0]})
-        self.assertEqual(app.window.status_page.motors.values, [.5, 0, 1, 0])
+        self.assertAlmostEqual(app.model.leftLevel, .5)
+        self.assertAlmostEqual(app.model.rightLevel, 0)
 
     def test_window_shows_saved_settings(self):
         saved = settings.Settings(grip_enabled=False, trigger_gain=1.2, trigger_follow=True, follow_ratio=.3,
-                                  audio_guard=False)
+                                  audio_guard=False, reduce_motion=True)
         app, _, _, _ = self.make_app(saved=saved)
-        page = app.window.vibration_page
-        self.assertFalse(page.grip_enabled.switch.isChecked())
-        self.assertEqual(page.trigger_gain.slider.value(), 120)
-        self.assertTrue(page.trigger_follow.switch.isChecked())
-        self.assertEqual(page.follow_ratio.slider.value(), 30)
-        self.assertFalse(app.window.device_page.audio_guard.switch.isChecked())
+        self.assertFalse(app.model.gripEnabled)
+        self.assertEqual(app.model.gripGainPercent, 100)
+        self.assertFalse(app.model.audioGuard)
+        self.assertTrue(app.model.reduceMotion)
 
     def test_autostart_switch_is_read_back_from_the_system(self):
         app, _, system, _ = self.make_app()
-        app.window.device_page.autostart.switch.setChecked(True)
+        app.model.setAutostart(True)
         self.assertTrue(system.autostart)
-        self.assertTrue(app.window.device_page.autostart.switch.isChecked())
+        self.assertTrue(app.model.autostart)
+
+    def test_export_logs_writes_a_single_text_file(self):
+        app, _, _, _ = self.make_app()
+        target = pathlib.Path(tempfile.mkdtemp()) / "diagnostics.txt"
+        with patch("PySide6.QtWidgets.QFileDialog.getSaveFileName",
+                   return_value=(str(target), "文本日志 (*.txt)")):
+            app.export_logs()
+        self.assertTrue(target.exists())
+        text = target.read_text(encoding="utf-8")
+        self.assertIn("Wolverine DS5 diagnostics", text)
+        self.assertIn(f"version: {__version__}", text)
 
     def test_tray_icon_differs_per_state(self):
         images = [draw_status_icon(state, 32).toImage() for state in ("connected", "waiting", "error", "stopped")]
@@ -252,6 +312,7 @@ class PcModeTests(unittest.TestCase):
         app._probe()
         self.assertEqual(system.synapse_calls, 2)
         self.assertEqual(bridge.started, 1)
+        self.assertEqual(app.model.sensaState, "就绪")
 
     def test_missing_synapse_does_not_stop_input_and_warns_once(self):
         app, bridge, system, _ = self.make_app(mode="pc")
@@ -262,6 +323,55 @@ class PcModeTests(unittest.TestCase):
         self.assertTrue(bridge.is_running)
         app.toast.assert_called_once()
         self.assertIn("雷云", app.toast.call_args.args[1])
+
+    def check_grips(self, app, system, checks):
+        app.grips_next_check = 0
+        app._probe()
+        self.assertTrue(wait_for(lambda: system.grip_checks == checks and not app.grips_checking, timeout=1))
+
+    def test_offline_synapse_overrides_the_bridges_ready_and_warns_once(self):
+        # 2026-10-30 早上：雷云离线没加载手柄，桥接只因共享内存能打开就报了就绪。
+        app, bridge, system, _ = self.make_app(mode="pc")
+        app.toast = Mock()
+        system.grips = "offline"
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": True})
+        self.check_grips(app, system, 1)
+        self.assertEqual(app.model.sensaState, "雷云离线")
+        self.assertFalse(app.model.gripReady)
+        self.assertIn("离线", app.state_title)
+        self.check_grips(app, system, 2)
+        app.toast.assert_called_once()
+        self.assertIn("离线", app.toast.call_args.args[1])
+        self.assertIn("网络", app.toast.call_args.args[2])
+        self.assertIn("Grips: offline", (app.log_dir / "startup.log").read_text(encoding="utf-8"))
+        system.grips = "ready"
+        self.check_grips(app, system, 3)
+        self.assertEqual(app.model.sensaState, "就绪")
+        self.assertTrue(app.model.gripReady)
+        self.assertEqual(app.state_title, "已连接")
+
+    def test_pad_not_yet_registered_by_synapse_is_waiting_without_a_warning(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        app.toast = Mock()
+        system.grips = "unregistered"
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": True})
+        self.check_grips(app, system, 1)
+        self.assertEqual(app.model.sensaState, "等待")
+        self.assertEqual(app.state_title, "等待握把震动服务")
+        app.toast.assert_not_called()
+
+    def test_unreadable_razer_logs_keep_the_bridges_own_verdict(self):
+        app, bridge, system, _ = self.make_app(mode="pc")
+        system.grips = "unknown"
+        bridge.status.emit({"state": "connected", "backend": "sensa", "grips_ready": True})
+        self.check_grips(app, system, 1)
+        self.assertEqual(app.model.sensaState, "就绪")
+
+    def test_grips_are_not_diagnosed_before_the_sensa_bridge_connects(self):
+        app, _, system, _ = self.make_app(mode="pc")
+        app.grips_next_check = 0
+        app._probe()
+        self.assertEqual(system.grip_checks, 0)
 
     def test_paused_or_exiting_app_does_not_relaunch_synapse(self):
         app, bridge, system, _ = self.make_app(mode="pc")
@@ -279,13 +389,14 @@ class PcModeTests(unittest.TestCase):
         self.assertEqual(bridge.started, 1)
         self.assertTrue(bridge.command[-1].endswith("pc_bridge.py"))
 
-    def test_switching_controller_mode_restarts_the_matching_bridge(self):
-        app, bridge, system, _ = self.make_app(mode="bridge")
-        self.assertTrue(bridge.command[-1].endswith("gip_bridge.py"))
+    def test_switching_controller_to_pc_mode_starts_the_sensa_bridge(self):
+        app, bridge, system, _ = self.make_app(mode="xbox")
+        self.assertEqual(bridge.started, 0)
         system.service, system.instance = "usbccgp", "USB\\VID_1532&PID_0A4C\\TEST"
         app._probe()
-        self.assertTrue(wait_for(lambda: bridge.started == 2, timeout=5))
+        self.assertTrue(wait_for(lambda: bridge.started == 1, timeout=5))
         self.assertTrue(bridge.command[-1].endswith("pc_bridge.py"))
+        self.assertEqual(app.model.modeLabel, "PC 模式")
 
     def test_pc_cable_receiver_switch_keeps_the_virtual_controller_process(self):
         app, bridge, system, _ = self.make_app(mode="pc")
@@ -299,47 +410,31 @@ class PcModeTests(unittest.TestCase):
             self.assertEqual(bridge.started, 1)
             self.assertTrue(bridge.pc)
 
-    def test_trigger_settings_are_unavailable_in_pc_mode(self):
-        app, bridge, _, _ = self.make_app(mode="pc")
-        bridge.status.emit({"type": "status", "state": "connected", "backend": "sensa"})
-        page = app.window.vibration_page
-        self.assertFalse(page.trigger_enabled.isEnabled())
-        self.assertFalse(page.trigger_test.button.isEnabled())
-        self.assertTrue(page.grip_test.button.isEnabled())
-        self.assertIn("PC 模式", page.trigger_test.contentLabel.text())
-
-    def test_driver_switch_is_not_offered_in_pc_mode(self):
-        app, _, _, _ = self.make_app(mode="pc")
-        self.assertTrue(app.window.device_page.driver_button.isHidden())
-        self.assertIn("Sensa", app.window.device_page.driver.contentLabel.text())
-
     def test_hiding_the_physical_pad_is_applied_and_saved(self):
         app, _, system, path = self.make_app(mode="pc")
-        app.window.device_page.hide_physical.switch.setChecked(True)
+        app.model.setHidePhysical(True)
         self.assertTrue(wait_for(lambda: settings.load(path).hide_physical, timeout=5))
         self.assertEqual(system.hiding_calls[-1][0], True)
-        self.assertEqual(system.elevated, [])
+        self.assertTrue(app.model.hidePhysical)
         self.assertEqual(settings.load(path).hidden_devices, (system.instance,))
 
     def test_controller_on_a_port_unknown_at_hide_time_is_flagged(self):
-        # HidHide 只隐藏开启时已存在的端口实例；换到新 USB 口后游戏又能看到实体手柄。
         app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
             hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\OLD",)))
-        self.assertIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
+        self.assertIn("USB 口", app.model.hideWarning)
 
     def test_rehiding_clears_the_new_port_warning(self):
-        app, _, system, path = self.make_app(mode="pc", saved=settings.Settings(
+        app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
             hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\OLD",)))
-        card = app.window.device_page.hide_physical
-        self.assertIn("USB 口", card.contentLabel.text())
+        self.assertIn("USB 口", app.model.hideWarning)
         app._hide_done(0, True)
-        self.assertNotIn("USB 口", card.contentLabel.text())
+        self.assertNotIn("USB 口", app.model.hideWarning)
         app._probe()
-        self.assertNotIn("USB 口", card.contentLabel.text())
+        self.assertNotIn("USB 口", app.model.hideWarning)
 
     def test_hide_saved_by_an_older_version_registers_existing_ports(self):
         app, _, system, path = self.make_app(mode="pc", saved=settings.Settings(hide_physical=True))
-        self.assertNotIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
+        self.assertNotIn("USB 口", app.model.hideWarning)
         app.flush_save()
         self.assertEqual(settings.load(path).hidden_devices, (system.instance,))
 
@@ -347,8 +442,8 @@ class PcModeTests(unittest.TestCase):
         app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
             hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",),
             hidden_app=core.bridge_command(pc=True)[0]))
-        self.assertNotIn("USB 口", app.window.device_page.hide_physical.contentLabel.text())
-        self.assertNotIn("放行", app.window.device_page.hide_physical.contentLabel.text())
+        self.assertNotIn("USB 口", app.model.hideWarning)
+        self.assertNotIn("放行", app.model.hideWarning)
 
     def test_hiding_records_the_whitelisted_bridge(self):
         app, _, _, path = self.make_app(mode="pc")
@@ -357,17 +452,15 @@ class PcModeTests(unittest.TestCase):
         self.assertEqual(settings.load(path).hidden_app, core.bridge_command(pc=True)[0])
 
     def test_bridge_not_whitelisted_by_hidhide_is_flagged(self):
-        # 换成打包版或挪了目录后，新桥接不在 HidHide 放行名单里，自己也读不到手柄。
         app, _, _, _ = self.make_app(mode="pc", saved=settings.Settings(
             hide_physical=True, hidden_devices=("USB\\VID_1532&PID_0A4C\\TEST",), hidden_app="C:/old/python.exe"))
-        self.assertIn("放行", app.window.device_page.hide_physical.contentLabel.text())
+        self.assertIn("放行", app.model.hideWarning)
 
     def test_failed_hiding_reverts_the_hide_switch(self):
         app, _, system, path = self.make_app(mode="pc")
         system.hiding_code = "HidHide unavailable"
-        switch = app.window.device_page.hide_physical.switch
-        switch.setChecked(True)
-        self.assertTrue(wait_for(lambda: not switch.isChecked(), timeout=5))
+        app.model.setHidePhysical(True)
+        self.assertTrue(wait_for(lambda: not app.model.hidePhysical, timeout=5))
         app.flush_save()
         self.assertFalse(settings.load(path).hide_physical)
 

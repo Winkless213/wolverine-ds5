@@ -28,6 +28,13 @@ def test_default_preserves_the_physically_tested_two_frequencies():
     assert totals(frame) == [26, 26]
 
 
+def test_left_and_right_gain_are_applied_per_side():
+    state = MixState(settings=Settings(grip_gain_left=1.0, grip_gain_right=0.0))
+    left, right = totals(compose_frame(DUAL, state))
+    assert left > 0
+    assert right == 0
+
+
 def test_gain_and_softness_keep_low_frequency_and_two_separate_bands():
     state = MixState(settings=Settings(grip_gain=1.5, grip_soft=True))
     sides = decode_frame(compose_frame(DUAL, state))["channels"]
@@ -228,6 +235,128 @@ def test_device_selection_uses_current_container_and_rejects_ambiguity():
         select_pc_device({"USB\\VID_1532&PID_0A3F\\PORT1": container})
 
 
+def frame_bytes(duration=40, transient=False):
+    """按 decode_frame 的位序拼一帧；transient=True 时带一个冲击槽。
+
+    空频带/空冲击只写一个 0 标志位（解析器读到这里就 break），尾部补零到整字节。
+    """
+    bits = [format(duration, "07b")]
+    for _ in range(2):
+        bits.append("0")
+        if transient:
+            bits.append("1")
+            bits.extend((format(30, "06b"), format(7, "07b"), format(20, "07b"), "0"))
+        else:
+            bits.append("0")
+    text = "".join(bits)
+    text += "0" * (-len(text) % 8)
+    return bytes(int(text[index:index + 8], 2) for index in range(0, len(text), 8))
+
+
+def test_transient_slots_are_dropped_instead_of_killing_the_output():
+    # 当初是“动态”档触发的；“打击”档按设计下发冲击槽，不在此列。
+    state = MixState(settings=Settings(haptic_profile="dynamic"))
+    raw = frame_bytes(transient=True)
+    assert any(side["transients"] for side in decode_frame(raw)["channels"])
+    composed = compose_frame(raw, state)
+    assert all(not side["transients"] for side in decode_frame(composed)["channels"])
+
+    output, encoder, mixer = backend()
+    encoder.encode.return_value = raw
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(state, now=1)
+        mailbox.push(bytes(480 * 4), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        assert output.transient_slots == 1
+        assert output.rejected_frames == 0
+    finally:
+        output.close()
+
+
+def test_frames_with_the_wrong_duration_are_skipped_not_fatal():
+    output, encoder, mixer = backend()
+    encoder.encode.return_value = frame_bytes(duration=30)
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(MixState(), now=1)
+        mailbox.push(bytes(480 * 4), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        assert output.rejected_frames == 1
+        assert mixer.play.call_count == 0
+    finally:
+        output.close()
+
+
+def test_transient_slots_survive_packing():
+    from sensa_multiband import pack_frame
+
+    source = {"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": 10, "frequency_code": 7}] * 4],
+         "transients": [{"amplitude_code": 20, "frequency_code": 30, "time_ms": 12}]}
+        for _ in range(2)]}
+    slot = decode_frame(pack_frame(source))["channels"][0]["transients"][0]
+    assert (slot["amplitude_code"], slot["frequency_code"], slot["time_ms"]) == (20, 30, 12)
+
+
+def test_full_profile_keeps_transient_slots_and_others_drop_them():
+    from sensa_multiband import pack_frame
+
+    source = {"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": 10, "frequency_code": 7}] * 4],
+         "transients": [{"amplitude_code": 20, "frequency_code": 30, "time_ms": 12}]}
+        for _ in range(2)]}
+    raw = pack_frame(source)
+    kept = decode_frame(compose_frame(raw, MixState(settings=Settings(haptic_profile="full"))))
+    dropped = decode_frame(compose_frame(raw, MixState(settings=Settings(haptic_profile="balanced"))))
+    assert kept["channels"][0]["transients"][0]["amplitude_code"] == 20
+    assert dropped["channels"][0]["transients"] == []
+
+
+def test_full_profile_is_two_bands_with_short_windows_for_punch():
+    from pcm_encoder import game_profile
+
+    profile = game_profile("full")
+    bands = profile["underlying_bands"]["bands"]
+    assert [band["frequency_range"] for band in bands] == [{"min": 30, "max": 100},
+                                                           {"min": 100, "max": 200}]
+    assert all(band["amplitude_window_length"] == .03 for band in bands)
+    assert all(band["frequency_window_length"] == .08 for band in bands)
+    assert profile["compressor"] == {"amp_limit": 1, "amp_comp": .5, "amp_comp_ratio": .5, "gamma": 3}
+
+
+def test_full_profile_keeps_faint_frames_other_profiles_clear():
+    """“打击”档地板 4：6 级的弱帧不再整段清零，其余档仍按全局 6 屏蔽。"""
+    from sensa_multiband import pack_frame
+
+    source = {"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": 6, "frequency_code": 7} for _ in range(4)]],
+         "transients": []}
+        for _ in range(2)]}
+    raw = pack_frame(source)
+    kept = decode_frame(compose_frame(raw, MixState(settings=Settings(haptic_profile="full"))))
+    dropped = decode_frame(compose_frame(raw, MixState(settings=Settings(haptic_profile="balanced"))))
+    assert kept["channels"][0]["bands"][0][0]["amplitude_code"] == 6
+    assert dropped["channels"][0]["bands"][0][0]["amplitude_code"] == 0
+
+
+def test_profile_is_logged_on_start_and_on_switch(capsys):
+    output, encoder, _ = backend()
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(MixState(), now=1)
+        mailbox.push(bytes(480 * 4), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        mailbox.configure(MixState(settings=Settings(haptic_profile="dynamic")), now=1.02)
+        mailbox.push(bytes(480 * 4), now=1.02)
+        output.render_pcm(mailbox.take(now=1.02), now=1.02)
+    finally:
+        output.close()
+    text = capsys.readouterr().out
+    assert "PCM 档位：full" in text
+    assert "PCM 档位：dynamic（从 full 切换）" in text
+
+
 def backend():
     encoder = Mock()
     encoder.encode.return_value = DUAL
@@ -254,6 +383,80 @@ def test_identical_frames_are_only_written_once_per_keepalive_window():
         assert mixer.play.call_count == 2
     finally:
         output.close()
+
+
+def test_profile_change_reaches_the_encoder_once():
+    output, encoder, _ = backend()
+    mailbox = PcmMailbox()
+    dynamic = MixState(settings=Settings(haptic_profile="dynamic"))
+    try:
+        for step in range(2):
+            now = 1 + step * .02
+            mailbox.configure(dynamic, now=now)
+            mailbox.push(bytes(480 * 4), now=now)
+            output.render_pcm(mailbox.take(now=now), now=now)
+        encoder.set_profile.assert_called_once_with("dynamic")
+    finally:
+        output.close()
+
+
+def test_dynamic_profile_makes_up_its_quieter_low_band():
+    from sensa_multiband import pack_frame
+
+    def sampled(amplitude):
+        return {"duration_ms": 40, "channels": [
+            {"bands": [[{"amplitude_code": amplitude, "frequency_code": 7} for _ in range(4)]],
+             "transients": []} for _ in range(2)]}
+
+    frame = pack_frame(sampled(10))
+    assert totals(compose_frame(frame, MixState())) == [10, 10]
+    assert totals(compose_frame(frame, MixState(settings=Settings(haptic_profile="dynamic")))) == [20, 20]
+    loud = pack_frame(sampled(20))
+    assert totals(compose_frame(loud, MixState(settings=Settings(haptic_profile="dynamic")))) == [32, 32]
+
+
+def test_balanced_plus_only_lowers_the_detection_threshold():
+    from pcm_encoder import game_profile
+
+    plus = game_profile("balanced_plus")
+    band = plus["underlying_bands"]["bands"][0]
+    assert band["minimal_amplitude_threshold"] == .004
+    band["minimal_amplitude_threshold"] = .01
+    assert plus == game_profile("balanced")
+
+
+def test_controlled_tuning_keeps_the_narrow_band_but_catches_weaker_events():
+    from pcm_encoder import game_profile, tuned_profile
+
+    raw = game_profile("controlled")
+    tuned = tuned_profile("controlled")
+    assert raw["underlying_bands"]["bands"][0]["minimal_amplitude_threshold"] == .03
+    band = tuned["underlying_bands"]["bands"][0]
+    assert band["minimal_amplitude_threshold"] == .01
+    assert band["frequency_range"] == {"min": 30, "max": 130}
+    assert band["output_frequency_range"] == {"min": 30, "max": 80}
+    assert tuned["compressor"] == {"amp_limit": 1, "amp_comp": .25, "amp_comp_ratio": .3, "gamma": 5}
+    assert [keyframe["volume"] for keyframe in tuned["haptic_EQ"]["keyframes"]] == [1, 1, .5, .5]
+
+
+def test_profiles_without_tuning_stay_verbatim():
+    from pcm_encoder import game_profile, tuned_profile
+
+    for name in ("legacy", "balanced", "dynamic"):
+        assert tuned_profile(name) == game_profile(name)
+
+
+def test_razer_presets_keep_the_recorded_band_layout():
+    from pcm_encoder import game_profile
+
+    dynamic = game_profile("dynamic")
+    assert dynamic["transients"]["volume"] == 1
+    assert [band["frequency_range"] for band in dynamic["underlying_bands"]["bands"]] == [
+        {"min": 30, "max": 100}, {"min": 100, "max": 200}]
+    controlled = game_profile("controlled")["underlying_bands"]["bands"][0]
+    assert controlled["output_frequency_range"] == {"min": 30, "max": 80}
+    with pytest.raises(ValueError):
+        game_profile("nope")
 
 
 def test_backend_sends_latest_pcm_then_silence_after_timeout():
@@ -460,7 +663,8 @@ def test_faint_low_residue_is_lifted_into_a_layer_instead_of_read_as_noise():
         return [max(point["amplitude_code"] for point in band)
                 for band in decode_frame(frame_bytes)["channels"][0]["bands"]]
 
-    state = MixState(settings=Settings(grip_soft=True))
+    # 按弱帧地板 6 设计（旧版档）；“打击”档地板是 4，另由 test_full_profile_keeps_faint_frames_other_profiles_clear 覆盖。
+    state = MixState(settings=Settings(grip_soft=True, haptic_profile="legacy"))
     assert bands(compose_frame(frame(3, 0), state)) == [16, 0]
     assert bands(compose_frame(frame(3, 2), state)) == [16, 2]
     assert bands(compose_frame(frame(9, 0), state)) == [9, 0]

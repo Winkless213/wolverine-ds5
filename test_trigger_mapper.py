@@ -59,6 +59,14 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual(pair.sample(0, 0.5, 0.075), (0, 0))
         self.assertEqual(pair.sample(0, 0.5, 0.101), (0, 0.22 / 8))
 
+    def test_tone_output_keeps_the_carrier_and_reports_its_frequency(self):
+        # 带频率的执行器直接收载波，不再靠幅度门控模拟节奏；无效果的扳机停在共振频率。
+        pair = TriggerPair(tone=True)
+        pair.update_report(report(right=VIBRATION))
+        self.assertEqual(pair.sample(0, 0.5, 0), (0, 0.22 / 8))
+        self.assertEqual(pair.sample(0, 0.5, 0.075), (0, 0.22 / 8))
+        self.assertEqual((pair.left.tone_hz, pair.right.tone_hz), (20.0, 10.0))
+
     def test_unknown_and_malformed_effects_cannot_leave_old_rumble(self):
         pair = TriggerPair()
         pair.update_report(report(left=FEEDBACK))

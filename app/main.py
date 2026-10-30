@@ -16,13 +16,14 @@ if __package__ in (None, ""):
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-from qfluentwidgets import (Action, FluentIcon, InfoBar, InfoBarPosition, MessageBox, SystemTrayMenu, Theme,
-                            setTheme, setThemeColor)
+from qfluentwidgets import Action, FluentIcon, MessageBox, SystemTrayMenu, Theme, setTheme, setThemeColor
 
 import settings
-from app import core, native, synapse
+from app import __version__, core, log_export, native, synapse
 from app.bridge import Bridge
-from app.window import MODE_TEXT, Window, status_icon
+from app.qml_window import QmlWindow
+from app.ui_model import UiModel
+from app.window import MODE_TEXT, status_icon
 
 NOTICES = {"connected": ("手柄已连接", "虚拟 DualSense 已就绪"),
            "lost": ("手柄已断开", "重新插上即可恢复，游戏无需重启"),
@@ -40,6 +41,7 @@ class System:
     detach_virtual = staticmethod(native.detach_virtual)
     restore_native = staticmethod(native.restore_native)
     ensure_synapse = staticmethod(synapse.ensure_running)
+    diagnose_synapse = staticmethod(synapse.diagnose)
 
     @staticmethod
     def configure_hiding(hidden, previous_app):
@@ -61,6 +63,7 @@ class App(QObject):
     virtual_detached = Signal(object)
     native_done = Signal(object)
     synapse_done = Signal(str)
+    grips_checked = Signal(str)
 
     def __init__(self, bridge, system, settings_path, log_dir):
         super().__init__()
@@ -74,15 +77,20 @@ class App(QObject):
         self.wanted = self.paused = self.busy = self.closing = self.checking = self.hinted = False
         self.pending_driver = None
         self.hiding = self.hide_failed = self.exiting = self.quit_pending = False
-        self.cloak_at = None
         self.connected_at = None
         self.icon_key = self.state_title = None
         self.tray = None
         self.synapse_checking = False
         self.synapse_next_check = 0
         self.synapse_result = None
+        self.grips_state = None
+        self.grips_checking = False
+        self.grips_next_check = 0
 
-        self.window = Window(self.settings, system.autostart_enabled(), log_dir)
+        self.model = UiModel(self.settings, log_dir)
+        self.model.apply_settings(self.settings)
+        self.model.set_autostart(system.autostart_enabled())
+        self.window = QmlWindow(self.model)
         self.save_timer = QTimer(self, singleShot=True, interval=400, timeout=self.flush_save)
         self.restart_timer = QTimer(self, singleShot=True, interval=3000, timeout=self._restart)
         self.probe_timer = QTimer(self, interval=2000, timeout=self._probe)
@@ -90,7 +98,7 @@ class App(QObject):
         self.tick_timer = QTimer(self, interval=1000, timeout=self._tick)
 
         bridge.status.connect(self._on_status)
-        bridge.meter.connect(self.window.status_page.meter)
+        bridge.meter.connect(self.model.set_meter)
         bridge.running.connect(self._on_running)
         self.usbip_checked.connect(self._on_usbip)
         self.driver_done.connect(self._driver_done)
@@ -98,18 +106,17 @@ class App(QObject):
         self.virtual_detached.connect(self._virtual_detached)
         self.native_done.connect(self._native_done)
         self.synapse_done.connect(self._synapse_done)
-        pages = self.window
-        pages.status_page.toggle_requested.connect(self._toggle)
-        pages.vibration_page.changed.connect(self.update_settings)
-        pages.vibration_page.test_requested.connect(self._test)
-        pages.device_page.changed.connect(self.update_settings)
-        pages.device_page.autostart_changed.connect(self._set_autostart)
-        pages.device_page.hide_changed.connect(self._set_hidden)
-        pages.device_page.driver_action.connect(self.switch_driver)
-        pages.device_page.open_logs.connect(lambda: system.open_folder(str(log_dir)))
-        pages.shown.connect(self._check_usbip)
-        pages.hidden.connect(self._hidden)
-        pages.quit_requested.connect(self.quit)
+        self.grips_checked.connect(self._grips_checked)
+        self.model.toggleRequested.connect(self._toggle)
+        self.model.settingsEdited.connect(self.update_settings)
+        self.model.testRequested.connect(self._test)
+        self.model.autostartRequested.connect(self._set_autostart)
+        self.model.hideRequested.connect(self._set_hidden)
+        self.model.openLogsRequested.connect(lambda: system.open_folder(str(log_dir)))
+        self.model.exportLogsRequested.connect(self.export_logs)
+        self.window.shown.connect(self._check_usbip)
+        self.window.hidden.connect(self._hidden)
+        self.window.quit_requested.connect(self.quit)
 
     def start(self, show=True):
         if self.settings.hide_physical and not self.settings.hidden_devices:
@@ -140,7 +147,9 @@ class App(QObject):
             if self._hide_warning() == "port":
                 self.notify("new_port")
             self._refresh()
-        if self.mode == "pc" and self.status.get("grips_ready") is False:
+        if self.mode == "pc" and self.status.get("backend") == "sensa":
+            self._check_grips()
+        if self.mode == "pc" and self._grips_ready() is False:
             self._ensure_synapse()
 
     def _hide_warning(self):
@@ -155,11 +164,11 @@ class App(QObject):
         return None
 
     def _apply_mode(self):
-        # 拔线（变为 absent）时桥接继续跑，虚拟 DS5 不掉，游戏无需重启；Xbox 驱动下桥接用不了，停掉。
-        self.wanted = self.mode != "xbox" and not self.paused
-        if self.wanted and self.mode in ("pc", "bridge") and self.bridge.pc != (self.mode == "pc"):
-            # 手柄换了模式：先停当前桥接，退出后由重启计时器按新模式拉起（虚拟 DS5 会短暂断开）。
-            self.bridge.set_pc(self.mode == "pc")
+        # PC-only 产品：PC 模式（以及拔线后的 absent）保持虚拟 DS5；Xbox 模式保留为实验性代码，不自动接管。
+        self.wanted = self.mode in ("pc", "absent") and not self.paused
+        if self.wanted and not self.bridge.pc:
+            # 从旧模式切到 PC：先停当前桥接，退出后由重启计时器拉起（虚拟 DS5 会短暂断开）。
+            self.bridge.set_pc(True)
             if self.bridge.is_running:
                 self.bridge.stop()
                 return
@@ -215,6 +224,42 @@ class App(QObject):
         elif result.startswith("error:"):
             self.toast("warning", "雷云自动启动未完成", "请手动打开 Razer Synapse；检查详情已记录到 startup.log")
 
+    def _check_grips(self):
+        # 桥接只知道震动服务的共享内存能不能打开；手柄有没有被雷云登记、雷云是不是离线，要看雷蛇自己的日志。
+        if (self.grips_checking or self.closing or self.exiting or self.quit_pending
+                or time.monotonic() < self.grips_next_check):
+            return
+        self.grips_checking = True
+        self.grips_next_check = time.monotonic() + 5
+
+        def work():
+            try:
+                result = self.system.diagnose_synapse()
+            except Exception as error:
+                self._log_synapse(f"Grips check failed: {error}")
+                result = "unknown"
+            self.grips_checked.emit(result)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _grips_checked(self, result):
+        self.grips_checking = False
+        if self.closing or self.exiting or self.quit_pending:
+            return
+        previous, self.grips_state = self.grips_state, result
+        if result == previous:
+            return
+        self._log_synapse(f"Grips: {result}")
+        if result == "offline":
+            self.toast("warning", "雷云处于离线模式", "雷云没联网时不会加载手柄，握把不会震。请恢复网络后重启雷云 Synapse")
+        self._refresh()
+
+    def _grips_ready(self):
+        ready = self.status.get("grips_ready")
+        if ready and self.grips_state in ("offline", "unregistered", "stopped"):
+            return False
+        return ready
+
     def _log_synapse(self, result):
         try:
             with (self.log_dir / "startup.log").open("a", encoding="utf-8") as file:
@@ -229,8 +274,8 @@ class App(QObject):
     def _toggle(self):
         if self.bridge.is_running or self.wanted:
             self.paused = True
-        elif self.mode == "xbox":
-            self.switch_driver("bridge")
+        elif self.mode != "pc":
+            self.toast("warning", "请切换到 PC 模式", "握把震动只支持 PC 模式；把手柄拨到 PC 模式并重新插拔")
             return
         else:
             self.paused = False
@@ -258,31 +303,42 @@ class App(QObject):
     def _refresh(self):
         running = self.bridge.is_running
         connected = running and self.status.get("state") == "connected"
-        key, title, detail = core.describe(running, self.wanted, self.status, self.mode)
+        ready = self._grips_ready()
+        status = dict(self.status, grips_ready=ready, synapse=self.grips_state)
+        key, title, detail = core.describe(running, self.wanted, status, self.mode)
         if self.busy:
             key, title, detail = "waiting", "正在切换驱动", "请在弹出的窗口中允许管理员权限"
         if self.exiting:
             key, title, detail = "waiting", "正在恢复原生手柄", "完成后自动退出"
         if running or self.wanted:
             action = "停止桥接"
-        elif self.mode == "xbox":
-            action = "切换到桥接模式"
+        elif self.mode in ("xbox", "bridge"):
+            action = "请切换到 PC 模式"
         else:
             action = "启动桥接"
-        page = self.window.status_page
-        page.show_state(key, title, detail, action, not (self.busy or self.exiting) and self.mode is not None)
-        page.mode_card.setContent(MODE_TEXT[self.mode])
-        self.window.device_page.show_mode(self.mode, self.busy)
-        self.window.device_page.show_hide_warning(self._hide_warning())
-        self.window.vibration_page.set_pc_mode(self.mode == "pc")
-        self.window.vibration_page.set_testable(connected)
-        if not connected and self.window.vibration_page.testing:
+        enabled = (running or self.wanted or self.mode == "pc") and not (self.busy or self.exiting)
+        self.model.apply_status(key, title, detail, action, enabled)
+        self.model.set_mode(self.mode)
+        self.model.set_connected(connected)
+        if self.mode is None:
+            self.model.set_ds5("检查中")
+        self.model.set_hide_warning(self._hide_warning())
+        if self.status.get("backend") == "sensa":
+            offline = not ready and self.grips_state == "offline"
+            self.model.set_sensa("就绪" if ready else "雷云离线" if offline else "等待")
+            self.model.set_grip_ready(bool(ready))
+        else:
+            self.model.set_sensa("未检测")
+            self.model.set_grip_ready(True)
+        was_testing = self.model.testing
+        self.model.set_testable(connected)
+        if not connected and was_testing:
             self._test(None)
         if connected and self.connected_at is None:
             self.connected_at = time.monotonic()
         elif not connected:
             self.connected_at = None
-            page.clear()
+            self.model.set_meter({"motors": [0, 0]})
         self.state_title = title
         if self.tray and key != self.icon_key:
             self.tray.setIcon(status_icon(key))
@@ -294,9 +350,9 @@ class App(QObject):
 
     def _tick(self):
         uptime = core.format_duration(time.monotonic() - self.connected_at) if self.connected_at else ""
-        self.window.status_page.uptime.setText(uptime)
+        self.model.set_uptime(uptime)
         if self.tray:
-            self.tray.setToolTip(f"Wolverine DS5 · {self.state_title}" + (f" {uptime}" if uptime else ""))
+            self.tray.setToolTip(f"Wolverine to DS5 · {self.state_title}" + (f" {uptime}" if uptime else ""))
 
     def _check_usbip(self):
         if self.checking or not self.window.isVisible():
@@ -310,13 +366,14 @@ class App(QObject):
 
     def _on_usbip(self, attached):
         self.checking = False
-        self.window.status_page.ds5_card.setContent("已挂载（usbip 127.0.0.1:3240）" if attached
-                                                    else "未挂载，桥接启动后自动挂载")
+        self.model.set_ds5("已挂载" if attached else "未挂载",
+                           "usbip · 127.0.0.1:3240" if attached else "桥接启动后自动挂载")
 
     # ---- 设置与测试 ----
 
     def update_settings(self, changes):
         self.settings = settings.Settings.from_dict({**dataclasses.asdict(self.settings), **changes})
+        self.model.apply_settings(self.settings)
         self.bridge.send(json.dumps({"type": "settings", "settings": dataclasses.asdict(self.settings)}))
         self.save_timer.start()
 
@@ -330,12 +387,29 @@ class App(QObject):
         except OSError as error:
             self.toast("error", "开机自启设置失败", str(error))
         actual = self.system.autostart_enabled()
-        if actual != enabled:
-            self.window.device_page.autostart.switch.setChecked(actual)
+        self.model.set_autostart(actual)
+
+    def export_logs(self):
+        from PySide6.QtCore import QStandardPaths
+        from PySide6.QtWidgets import QFileDialog
+        desktop = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+        folder = pathlib.Path(desktop) if desktop else pathlib.Path.home()
+        default = log_export.default_export_path(folder)
+        path, _ = QFileDialog.getSaveFileName(None, "导出诊断日志", str(default), "文本日志 (*.txt)")
+        if not path:
+            return
+        try:
+            text = log_export.build_diagnostic(self.log_dir, __version__, self.mode,
+                                               dataclasses.asdict(self.settings), status=self.status)
+            pathlib.Path(path).write_text(text, encoding="utf-8")
+        except OSError as error:
+            self.toast("error", "日志导出失败", str(error))
+            return
+        self.toast("success", "日志已导出", path)
 
     def _test(self, target):
         self.bridge.send(json.dumps({"type": "test", "target": target}))
-        self.window.vibration_page.set_test(target)
+        self.model.set_testing(target)
 
     # ---- 对游戏隐藏实体手柄（HidHide） ----
 
@@ -343,7 +417,6 @@ class App(QObject):
         if self.hiding or self.exiting or self.closing:
             return
         self.hiding = True
-        self.window.device_page.hide_physical.setEnabled(False)
 
         def work():
             try:
@@ -354,35 +427,13 @@ class App(QObject):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _warn_conflicts(self):
-        """遮挡只对启动之后的程序生效：接管前就在跑的游戏仍能看到实体手柄，会和虚拟手柄抢信号。"""
-        try:
-            stale = [item["name"] for item in core.stale_windowed_processes(self.cloak_at)] if self.cloak_at else []
-            tools = core.conflict_tools()
-            audio = core.audio_to_haptics_active()
-        except Exception as error:  # 枚举失败不影响主流程
-            self._log_synapse(f"conflict check failed: {error!r}")
-            return
-        lines = []
-        if stale:
-            lines.append("接管前已在运行：" + "、".join(stale[:3]) + "；若其中含游戏请重启它")
-        if tools:
-            lines.append("还在运行：" + "、".join(tools) + "；它会再挂一个虚拟手柄")
-        if audio:
-            lines.append("雷云正在把音频转成震动；请在设备页取消勾选“音频到触感（此设备）”")
-        if not lines:
-            return
-        for line in lines:
-            self._log_synapse("conflict: " + line)
-        self.toast("warning", "可能和虚拟手柄抢信号", "；".join(lines))
-
     def _hide_done(self, code, hidden):
         self.hiding = False
         if self.closing:
             return
-        self.window.device_page.hide_physical.setEnabled(True)
         self.hide_failed = hidden and code != 0
         if code == 0:
+            self.model.set_hide_physical(hidden)
             self.update_settings({"hide_physical": hidden,
                                   "hidden_devices": tuple(self.system.pc_instances()) if hidden else (),
                                   "hidden_app": core.bridge_command(pc=True)[0] if hidden else ""})
@@ -391,16 +442,9 @@ class App(QObject):
                 return
             self._apply_mode()
             self._refresh()
-            self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄",
-                       "若已运行的 Steam 或游戏仍识别到 Xbox，请完全退出后重开" if hidden else "游戏可以再次直接读取实体手柄")
-            if hidden:
-                self.cloak_at = time.time()
-                self._warn_conflicts()
+            self.toast("success", "已隐藏实体手柄" if hidden else "已恢复实体手柄", "设置已保存")
             return
-        switch = self.window.device_page.hide_physical.switch
-        switch.blockSignals(True)
-        switch.setChecked(self.settings.hide_physical)
-        switch.blockSignals(False)
+        self.model.set_hide_physical(self.settings.hide_physical)
         if self.quit_pending:
             self.quit()
             return
@@ -468,7 +512,7 @@ class App(QObject):
 
     def _make_tray(self):
         self.tray = QSystemTrayIcon(status_icon("waiting"), self)
-        self.menu = SystemTrayMenu(parent=self.window)
+        self.menu = SystemTrayMenu()
         self.toggle_action = Action(FluentIcon.SYNC, "停止桥接", triggered=self._toggle)
         self.menu.addActions([Action(FluentIcon.HOME, "打开主界面", triggered=self.show_window),
                               self.toggle_action,
@@ -477,6 +521,7 @@ class App(QObject):
         self.tray.activated.connect(self._tray_activated)
         self.tray.show()
         self.window.tray_available = True
+        self.model.set_tray_available(True)
 
     def _tray_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
@@ -490,7 +535,7 @@ class App(QObject):
     def _hidden(self):
         if not self.hinted and self.tray:
             self.hinted = True
-            self.tray.showMessage("Wolverine DS5 仍在运行", "桥接在后台继续工作，可从托盘图标打开或退出",
+            self.tray.showMessage("Wolverine to DS5 仍在运行", "桥接在后台继续工作，可从托盘图标打开或退出",
                                   self.tray.icon(), 3000)
 
     def notify(self, event):
@@ -499,7 +544,7 @@ class App(QObject):
             self.tray.showMessage(title, content, self.tray.icon(), 4000)
 
     def toast(self, kind, title, content):
-        getattr(InfoBar, kind)(title, content, duration=6000, position=InfoBarPosition.TOP_RIGHT, parent=self.window)
+        self.model.show_toast(kind, title, content)
 
     def quit(self):
         if self.closing or self.exiting:
@@ -512,7 +557,6 @@ class App(QObject):
         for timer in (self.restart_timer, self.probe_timer, self.usbip_timer, self.tick_timer):
             timer.stop()
         self.flush_save()
-        self.window.device_page.setEnabled(False)
         self._refresh()
 
         def detach():
@@ -552,7 +596,6 @@ class App(QObject):
             self.exiting = self.quit_pending = False
             self.hide_failed = self.settings.hide_physical
             self.window.quitting = False
-            self.window.device_page.setEnabled(True)
             for timer in (self.probe_timer, self.usbip_timer, self.tick_timer):
                 timer.start()
             self._refresh()
@@ -629,6 +672,7 @@ def self_test():
     import tempfile
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
     report, ok = [], True
     try:
         from PySide6.QtWidgets import QApplication
@@ -638,6 +682,13 @@ def self_test():
         qt = QApplication([])
         report.append(f"qt_platform={qt.platformName()}")
         root = core.root_dir()
+        from app.qml_window import QmlWindow
+        from app.ui_model import UiModel
+        window = QmlWindow(UiModel(settings.Settings(), pathlib.Path(tempfile.gettempdir())))
+        qml_ok = window.root is not None and (root / "ui" / "main.qml").exists()
+        report.append(f"qml={qml_ok}")
+        ok = ok and qml_ok
+        window.close()
         for name in ("wolverine-capture.exe", "SDL3.dll", "xbox-sensa-device.json", "sensa-device.json"):
             present = (root / name).exists()
             ok = ok and present

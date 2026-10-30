@@ -44,6 +44,24 @@ class InputTests(unittest.TestCase):
         self.assertEqual(input_state([0]*6, {6})["Buttons"], 0x2000)
         self.assertEqual(input_state([0]*6, set())["Buttons"], 0)
 
+    def test_view_plus_right_stick_swipes_the_touchpad(self):
+        right = input_state([0, 0, 32767, 0, 0, 0], {4})
+        self.assertTrue(right["Touch1Active"])
+        self.assertEqual((right["Touch1X"], right["Touch1Y"]), (1919, 540))
+        # 滑动期间只报触点，不把 View 当成按住点击，否则游戏会当成一次长按。
+        self.assertEqual(right["Buttons"], 0)
+        left = input_state([0, 0, -32768, 0, 0, 0], {4})
+        self.assertEqual(left["Touch1X"], 0)
+        up = input_state([0, 0, 0, -32768, 0, 0], {4})
+        self.assertEqual(up["Touch1Y"], 0)
+
+    def test_touchpad_click_is_kept_when_the_stick_stays_centered(self):
+        centered = input_state([0]*6, {4})
+        self.assertNotIn("Touch1Active", centered)
+        self.assertEqual(centered["Buttons"], 0x20000)
+        # 没按 View 时推杆不产生触点，右摇杆照常当视角用。
+        self.assertNotIn("Touch1Active", input_state([0, 0, 32767, 0, 0, 0], set()))
+
     def test_stick_extremes_and_trigger_press(self):
         result = input_state([-32768, 32767, 0, 256, 32767, 0], set())
         self.assertEqual([result[k] for k in ("LX", "LY", "RX", "RY", "L2", "R2")], [-128,127,0,1,255,0])

@@ -4,15 +4,26 @@ import json
 import os
 import pathlib
 
-RANGES = {"grip_gain": (0.0, 1.5), "trigger_gain": (0.0, 1.5), "follow_ratio": (0.0, 1.0)}
+RANGES = {"grip_gain": (0.0, 1.5), "grip_gain_left": (0.0, 1.5), "grip_gain_right": (0.0, 1.5),
+          "trigger_gain": (0.0, 1.5), "follow_ratio": (0.0, 1.0)}
+PROFILES = ("legacy", "controlled", "balanced", "balanced_plus", "dynamic", "full")
+# 2026-10-30 实机确认“打击”战斗不丢震动、打击反馈正常，设为默认；已保存的选择不迁移。
+DEFAULT_PROFILE = "full"
 
 
 @dataclass(frozen=True)
 class Settings:
     grip_enabled: bool = True
+    # 旧版单旋钮保留作迁移入口；新界面分别写左右两侧。
     grip_gain: float = 1.0
+    grip_gain_left: float = None
+    grip_gain_right: float = None
     # PC 模式握把按雷蛇自带 profile 压低高频（100Hz 以上减弱、主频往低处压），手感更钝更柔。
     grip_soft: bool = False
+    # PC 多频握把使用的雷蛇编码器 profile：默认“打击”（full）；legacy 为原双频带，其余档位抄自 Synapse 音频到触觉预设。
+    haptic_profile: str = DEFAULT_PROFILE
+    # 只影响界面动效，不影响桥接。
+    reduce_motion: bool = False
     trigger_enabled: bool = True
     trigger_gain: float = 1.0
     # DS5 的 0x21/0x25 是扳机阻力（拉弓、扣扳机的“硬”感），纽扣马达只能硬震，默认不转换；
@@ -28,6 +39,15 @@ class Settings:
     hidden_devices: tuple = ()
     # 隐藏时放行的桥接程序；换成打包版或挪了目录后，新桥接不在 HidHide 放行名单里，也读不到手柄。
     hidden_app: str = ""
+
+    def __post_init__(self):
+        if self.haptic_profile not in PROFILES:
+            object.__setattr__(self, "haptic_profile", DEFAULT_PROFILE)
+        # 旧配置只有 grip_gain；缺哪一侧就把旧值迁移到哪一侧，显式 1.0 不被旧值覆盖。
+        if self.grip_gain_left is None:
+            object.__setattr__(self, "grip_gain_left", self.grip_gain)
+        if self.grip_gain_right is None:
+            object.__setattr__(self, "grip_gain_right", self.grip_gain)
 
     @classmethod
     def from_dict(cls, data):

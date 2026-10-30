@@ -24,9 +24,11 @@ class CaptureRecorder:
         self.generation = 0
         self.source = None
         self.next_frame = 0
+        self.segment = 0
         self.audio = None
         self.stats = {"frames": 0, "missing_frames": 0, "stale_blocks": 0,
-                      "duplicate_blocks": 0, "files": [], "peak": [0, 0], "sum_squares": [0, 0]}
+                      "duplicate_blocks": 0, "resyncs": 0, "files": [], "peak": [0, 0],
+                      "sum_squares": [0, 0]}
 
     def reset(self, generation):
         if self.audio:
@@ -35,6 +37,16 @@ class CaptureRecorder:
         self.generation = generation
         self.next_frame = 0
         self.source = None
+        self.segment = 0
+
+    def _restart(self, first, source):
+        """游戏重开触觉流后帧号会跳回 0；另起一个文件，不能把整段当重复丢掉。"""
+        if self.audio:
+            self.audio.close()
+        self.audio = None
+        self.next_frame = first
+        self.source = source
+        self.segment += 1
 
     def accept(self, message):
         if message["type"] == "reset":
@@ -50,15 +62,24 @@ class CaptureRecorder:
         if generation > self.generation:
             self.reset(generation)
         if first < self.next_frame:
-            self.stats["duplicate_blocks"] += 1
-            return
+            # 小于 1 秒的重叠是真实重复块；整段跳回 0 是新开的触觉流。
+            if self.next_frame - (first + frames) <= 48000:
+                self.stats["duplicate_blocks"] += 1
+                return
+            self._restart(first, source)
+            self.stats["resyncs"] += 1
         gap = first - self.next_frame
         if gap > 48000:
-            raise ValueError("Capture gap exceeds one second; refusing to conceal a failed capture")
+            # 游戏重开或 capture 断流超过 1 秒：不伪装成连续录音，另起一段。
+            self._restart(first, source)
+            self.stats["resyncs"] += 1
+            gap = 0
         if self.audio is None:
-            path = self.directory / f"{source}-{generation:04d}.wav"
-            if path.exists():
-                raise FileExistsError(path)
+            name = f"{source}-{generation:04d}" + (f"-r{self.segment}" if self.segment else "")
+            path = self.directory / f"{name}.wav"
+            while path.exists():
+                self.segment += 1
+                path = self.directory / f"{source}-{generation:04d}-r{self.segment}.wav"
             self.audio = wave.open(str(path), "wb")
             self.audio.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
             self.source = source

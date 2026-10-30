@@ -74,9 +74,11 @@ class ResistancePulse:
 
 
 class Trigger:
-    def __init__(self, gain=0.22, feedback_envelope=False):
+    def __init__(self, gain=0.22, feedback_envelope=False, tone=False):
         self.gain = gain
         self.feedback = ResistancePulse() if feedback_envelope else None
+        # tone=True 表示执行器自带频率：载波直接下发，不再用幅度门控模拟节奏。
+        self.tone = tone
         self.effect = Effect()
         self.previous = None
         self.armed = False
@@ -92,9 +94,16 @@ class Trigger:
         self.armed = self.previous is not None and self.previous < effect.start
         self.rhythm_started = None
 
+    @property
+    def tone_hz(self):
+        # 只有 0x26 带载波频率；其余模式没有频率信息，交给执行器的共振频率。
+        if self.effect.mode == 0x26 and self.effect.frequency:
+            return float(self.effect.frequency)
+        return 20.0
+
     def sample(self, position, now):
         if not math.isfinite(position) or not 0 <= position <= 1 or not math.isfinite(now):
-            self.__init__(self.gain, self.feedback is not None)
+            self.__init__(self.gain, self.feedback is not None, self.tone)
             return 0.0
         effect = self.effect
         amplitude = 0.0
@@ -117,19 +126,21 @@ class Trigger:
             else:
                 if self.rhythm_started is None:
                     self.rhythm_started = now
-                # 高频载波不能靠纽扣马达幅度指令还原；首版显式降级为持续震动。
-                if effect.frequency <= 20 and ((now - self.rhythm_started) * effect.frequency) % 1 >= 0.5:
+                # 没有频率通道的执行器只能靠幅度门控模拟低频节奏；高频载波显式降级为持续震动。
+                if (not self.tone and effect.frequency <= 20
+                        and ((now - self.rhythm_started) * effect.frequency) % 1 >= 0.5):
                     amplitude = 0.0
         self.previous = position
         return amplitude * self.gain
 
 
 class TriggerPair:
-    def __init__(self, gain=0.22, feedback_envelope=False):
+    def __init__(self, gain=0.22, feedback_envelope=False, tone=False):
         self.gain = gain
         self.feedback_envelope = feedback_envelope
-        self.left = Trigger(gain, feedback_envelope)
-        self.right = Trigger(gain, feedback_envelope)
+        self.tone = tone
+        self.left = Trigger(gain, feedback_envelope, tone)
+        self.right = Trigger(gain, feedback_envelope, tone)
         self.unsupported_modes = set()
         self.malformed_reports = 0
 

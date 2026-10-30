@@ -2,7 +2,9 @@ import base64
 import collections
 import io
 import json
+from pathlib import Path
 import queue
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -410,6 +412,51 @@ def audio_block(first, frames=48):
     return {"type": "audio", "generation": 1, "first_frame": first, "frames": frames,
             "source": "usb-host", "sample_rate": 48000,
             "pcm": base64.b64encode(bytes(frames * 4)).decode()}
+
+
+class ServeSelectionTests(unittest.TestCase):
+    def test_private_sensa_is_the_default_when_the_local_har_is_usable(self):
+        with patch("gip_bridge.private_sensa", return_value=True):
+            from xbox_sensa_bridge import serve
+            self.assertIs(gip_bridge.select_serve(), serve)
+
+    def test_unusable_har_keeps_the_gip_trigger_path(self):
+        with patch("gip_bridge.private_sensa", return_value=False):
+            self.assertIsNone(gip_bridge.select_serve())
+
+    def test_environment_can_force_the_legacy_path_back_on(self):
+        with patch.dict("os.environ", {"WOLVERINE_XBOX_SENSA": "0"}), \
+                patch("xbox_sensa.available", return_value=True):
+            self.assertIsNone(gip_bridge.select_serve())
+
+
+class PlayRecordTests(unittest.TestCase):
+    def test_environment_flag_records_haptic_audio_next_to_the_logs(self):
+        from test_capture_recorder import block
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        pcm = bytes(48 * 4)
+        with patch.dict("os.environ", {"WOLVERINE_PLAY_RECORD": "1", "LOCALAPPDATA": folder.name}):
+            haptics = Haptics(Mock())
+            self.assertIsNotNone(haptics.recorder)
+            haptics.accept(block(1, 0, pcm, "usb-host"), now=10)
+            self.assertEqual(haptics.recorder.stats["frames"], 48)
+            haptics.attach(NullOutput())
+        captures = list(Path(folder.name, "WolverineDS5", "captures").glob("*/capture.json"))
+        self.assertEqual(len(captures), 1)
+        self.assertEqual(haptics.recorder, None)
+
+    def test_recording_is_off_by_default(self):
+        with patch.dict("os.environ", {"WOLVERINE_PLAY_RECORD": "0"}):
+            self.assertIsNone(Haptics(Mock()).recorder)
+
+    def test_recorder_failures_never_stop_haptics(self):
+        from test_capture_recorder import block
+        haptics = Haptics(Mock())
+        haptics.recorder = Mock()
+        haptics.recorder.accept.side_effect = ValueError("gap")
+        haptics.accept(block(1, 0, bytes(48 * 4), "usb-host"), now=10)
+        self.assertIsNone(haptics.recorder)
 
 
 if __name__ == "__main__":

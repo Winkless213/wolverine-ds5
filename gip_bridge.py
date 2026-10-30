@@ -3,6 +3,7 @@ import base64
 import collections
 import json
 import os
+import pathlib
 import queue
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import time
 
 import audio_guard
 import settings
+from capture_recorder import CaptureRecorder
 from gip_host import GipHost, UsbTransport
 from settings import Settings
 from trigger_mapper import TriggerPair
@@ -34,9 +36,9 @@ class Haptics:
     GIP 路径按原生比例输出：游戏给多少强度，马达就出多少（满幅 = 100%），不另加上限。
     """
 
-    def __init__(self, output, settings=None):
+    def __init__(self, output, settings=None, trigger_tone=False):
         envelope = os.environ.get("WOLVERINE_TRIGGER_ENVELOPE") == "1"
-        self.mapper = TriggerPair(gain=1, feedback_envelope=envelope)
+        self.mapper = TriggerPair(gain=1, feedback_envelope=envelope, tone=trigger_tone)
         if envelope:
             print("Trigger resistance mapping: contact pulse, 60ms hold + 180ms fade", flush=True)
         self.bridge = XusbBridge(output, limit=1, soft=(settings or Settings()).grip_soft)
@@ -47,26 +49,43 @@ class Haptics:
         self.stalls = 0
         self.audio_errors = 0
         self.trace = TriggerTrace(os.environ.get("WOLVERINE_TRIGGER_TRACE_FLAG"))
+        self.recorder = self._make_recorder()
+
+    @staticmethod
+    def _make_recorder():
+        """WOLVERINE_PLAY_RECORD=1 时把游戏触觉音频录成 WAV，供离线分析频带覆盖。"""
+        if os.environ.get("WOLVERINE_PLAY_RECORD") != "1":
+            return None
+        directory = (pathlib.Path(os.environ.get("LOCALAPPDATA", ".")) / "WolverineDS5"
+                     / "captures" / time.strftime("%Y%m%d-%H%M%S"))
+        print(f"Recording haptic audio to {directory}", flush=True)
+        return CaptureRecorder(directory)
 
     def mix(self, values, now):
         left, right, lt, rt = values
-        grip = self.settings.grip_gain if self.settings.grip_enabled else 0
+        gains = (self.settings.grip_gain_left, self.settings.grip_gain_right)
+        grips = gains if self.settings.grip_enabled else (0, 0)
         trigger = self.settings.trigger_gain if self.settings.trigger_enabled else 0
-        left, right, lt, rt = (min(1, value * gain) for value, gain in
-                               ((left, grip), (right, grip), (lt, trigger), (rt, trigger)))
+        left, right = min(1, left * grips[0]), min(1, right * grips[1])
+        lt, rt = min(1, lt * trigger), min(1, rt * trigger)
         if self.settings.trigger_follow and self.settings.trigger_enabled:
             ratio = self.settings.follow_ratio
             lt, rt = max(lt, values[0] * ratio), max(rt, values[1] * ratio)
         if self.test_target is not None:
             # 测试模式：LT/RT 的按压深度只驱动被测的一组马达（按当前强度），游戏输出与跟随全部屏蔽，避免串。
-            gain = self.settings.grip_gain if self.test_target == "grip" else self.settings.trigger_gain
-            pair = tuple(min(1, value * gain) for value in self.test_pressure)
-            return (*pair, 0, 0) if self.test_target == "grip" else (0, 0, *pair)
+            if self.test_target == "grip":
+                pair = tuple(min(1, value * gain) for value, gain in zip(self.test_pressure, gains))
+                return (*pair, 0, 0)
+            pair = tuple(min(1, value * trigger) for value in self.test_pressure)
+            return (0, 0, *pair)
         return left, right, lt, rt
 
     def attach(self, output):
         if isinstance(output, NullOutput):
             self.trace.close(time.monotonic())
+            if self.recorder is not None:
+                self.recorder.close()
+                self.recorder = None
         # 重连后的手柄马达是停的；清掉已发记录，让当前效果在下一轮立刻重发。
         self.bridge.output = output
         self.bridge.previous = (0, 0, 0, 0)
@@ -103,6 +122,16 @@ class Haptics:
             if message["generation"] >= self.bridge.generation:
                 self.bridge.generation = message["generation"]
                 self.bridge.next_frame = message["first_frame"] + message["frames"]
+        self.record(message)
+
+    def record(self, message):
+        if self.recorder is not None and message["type"] in ("audio", "reset", "stopped"):
+            try:
+                self.recorder.accept(message)
+            except (ValueError, FileExistsError, OSError) as error:
+                # 录制是旁路诊断，缺样或写盘失败都不能影响震动输出。
+                print(f"capture recorder: {type(error).__name__}: {error}", flush=True)
+                self.recorder = None
 
     def step(self, l2, r2, now):
         self.test_pressure = (l2 / 255, r2 / 255)
@@ -118,10 +147,13 @@ class Haptics:
             # 长驻桥接不能因此退出，只计数并从下一轮继续。
             self.stalls += 1
             self.bridge.last_poll = None
-        self.trace.sample({"l2": l2, "r2": r2, "triggers": list(self.bridge.previous[2:]),
-                           "trigger_gain": self.settings.trigger_gain,
-                           "resistance_enabled": self.settings.trigger_resistance,
-                           "follow_enabled": self.settings.trigger_follow}, now)
+        self.trace.sample(self.trace_state(l2, r2), now)
+
+    def trace_state(self, l2, r2):
+        return {"l2": l2, "r2": r2, "triggers": list(self.bridge.previous[2:]),
+                "trigger_gain": self.settings.trigger_gain,
+                "resistance_enabled": self.settings.trigger_resistance,
+                "follow_enabled": self.settings.trigger_follow}
 
 
 def handle_command(haptics, command):
@@ -242,9 +274,23 @@ def reconnect_loop(opener, session, wait, alive):
     return 1
 
 
+def private_sensa():
+    """私有 Sensa 通道依赖本机专有 HAR，不随包分发；不可用时回到 GIP 扳机路线。"""
+    from xbox_sensa import available
+    return available()
+
+
+def select_serve():
+    """Xbox 模式默认用私有 Sensa 同帧驱动四个马达；WOLVERINE_XBOX_SENSA=0 强制回到旧路线。"""
+    if os.environ.get("WOLVERINE_XBOX_SENSA") == "0" or not private_sensa():
+        return None
+    from xbox_sensa_bridge import serve
+    return serve
+
+
 def main(serve_capture=None):
-    if serve_capture is None and os.environ.get("WOLVERINE_XBOX_SENSA") == "1":
-        from xbox_sensa_bridge import serve as serve_capture
+    if serve_capture is None:
+        serve_capture = select_serve()
     print("Starting GIP to DualSense bridge...", flush=True)
     capture_proc = subprocess.Popen(
         [os.environ.get("GIP_BRIDGE_CAPTURE_EXE", "./wolverine-capture.exe"), "-port", "3240", "-duration", "24h"],
