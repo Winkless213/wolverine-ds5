@@ -25,7 +25,9 @@ APP_MODULES = ("app", "app.core", "app.window", "app.bridge", "app.native", "app
 DEFAULT_TESTS = ("test_sensa_multiband.py", "test_pc_bridge.py", "test_sensa_frame.py", "test_settings.py",
                  "app/test_core.py")
 # 这些文件随包分发或决定构建输入，必须与源码一致；不参与字节码比对。
-ASSET_FILES = ("sensa-device.json", "WolverineDS5.spec", "wolverine-capture.exe", "SDL3.dll")
+# QML 是运行时从 _internal/ui 读的松散文件，不加进这里界面改动就会静默漏过校验。
+ASSET_FILES = ("sensa-device.json", "WolverineDS5.spec", "wolverine-capture.exe", "SDL3.dll",
+               "ui/StatusPage.qml")
 VENDOR_HINTS = ("HAR.dll", "Interhaptics", "RazerProvider")
 
 

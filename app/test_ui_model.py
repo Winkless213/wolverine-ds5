@@ -28,5 +28,28 @@ class HapticProfileTests(unittest.TestCase):
         self.assertEqual(model.hapticProfile, "full")
 
 
+class HapticTransientTests(unittest.TestCase):
+    """加重开关必须一路走到 settingsEdited，否则界面上能点、桥接收不到。"""
+
+    def test_the_switch_emits_the_setting_and_updates_the_property(self):
+        model = UiModel(Settings(), pathlib.Path("."))
+        seen = []
+        model.settingsEdited.connect(seen.append)
+        self.assertFalse(model.hapticTransient)
+        model.setHapticTransient(True)
+        self.assertEqual(seen, [{"haptic_transient": True}])
+        self.assertTrue(model.hapticTransient)
+        model.setHapticTransient(False)
+        self.assertEqual(seen[-1], {"haptic_transient": False})
+        self.assertFalse(model.hapticTransient)
+
+    def test_apply_settings_reflects_a_choice_loaded_from_disk(self):
+        model = UiModel(Settings(), pathlib.Path("."))
+        model.apply_settings(Settings(haptic_transient=True))
+        self.assertTrue(model.hapticTransient)
+        model.apply_settings(Settings(haptic_transient=False))
+        self.assertFalse(model.hapticTransient)
+
+
 if __name__ == "__main__":
     unittest.main()

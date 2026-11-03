@@ -294,6 +294,20 @@ Item {
                         }
                     }
 
+                    SettingRow {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        title: "打击加重"
+                        desc: "关闭即加重前的手感"
+                        enabled: appModel.gripEnabled
+                        opacity: appModel.gripEnabled ? 1 : 0.45
+                        Toggle {
+                            value: appModel.hapticTransient
+                            enabled: appModel.gripEnabled
+                            onToggled: appModel.setHapticTransient(checked)
+                        }
+                    }
+
                     Item { Layout.fillHeight: true }
 
                     SettingRow {

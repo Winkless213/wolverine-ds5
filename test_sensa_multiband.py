@@ -6,8 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
+import sensa_multiband
 from sensa_frame import decode_frame
-from sensa_multiband import MixState, PcmMailbox, MultibandGrips, compose_frame
+from sensa_multiband import FrameTrace, MixState, PcmMailbox, MultibandGrips, compose_frame
 from sensa_mixer import mixer_command, play_command, select_pc_device
 from settings import Settings
 
@@ -20,6 +21,12 @@ DEVICE = "2636-{01234567-89ab-4cde-8f01-23456789abcd}"
 def totals(frame):
     return [sum(max(p["amplitude_code"] for p in band) for band in side["bands"])
             for side in decode_frame(frame)["channels"]]
+
+
+def chunk(left, right=None, count=480):
+    """10ms 双声道 S16LE，峰值 = 给定比例 × 满幅；编码器一个 chunk 正好一帧。"""
+    right = left if right is None else right
+    return struct.pack("<hh", round(left * 32767), round(right * 32767)) * count
 
 
 def test_default_preserves_the_physically_tested_two_frequencies():
@@ -36,12 +43,15 @@ def test_left_and_right_gain_are_applied_per_side():
 
 
 def test_gain_keeps_low_frequency_and_two_separate_bands():
+    from sensa_multiband import MAX_AMPLITUDE
+
     state = MixState(settings=Settings(grip_gain=1.5))
     sides = decode_frame(compose_frame(DUAL, state))["channels"]
     for side in sides:
         assert [band[0]["frequency_code"] for band in side["bands"]] == [7, 41]
         assert side["bands"][0][0]["amplitude_code"] > 14
-    assert max(totals(compose_frame(DUAL, state))) <= 32
+    # 1.5 倍增益必须真的抬高中强帧；旧的 32 上限会把它压回 32，等于增益失效。
+    assert 32 < max(totals(compose_frame(DUAL, state))) <= MAX_AMPLITUDE
 
 
 def test_band_leakage_does_not_turn_a_single_low_tone_into_two_low_tones():
@@ -58,12 +68,14 @@ def test_band_leakage_does_not_turn_a_single_low_tone_into_two_low_tones():
 
 
 def test_left_pcm_and_right_classic_rumble_remain_independent():
+    from sensa_multiband import MAX_AMPLITUDE
+
     result = compose_frame(LEFT, MixState(rumble=(0, .2)))
     left, right = decode_frame(result)["channels"]
     # 历史帧首点处于预热阶段，原始码为 4；不能把稳定 60Hz 的预期码 9 套到这个夹具。
     assert left["bands"][0][0]["frequency_code"] == 4
     assert right["bands"][0][0] == {"amplitude_code": 13, "frequency_code": 7}
-    assert max(totals(result)) <= 32
+    assert max(totals(result)) <= MAX_AMPLITUDE
 
 
 @pytest.mark.parametrize("state", [MixState(settings=Settings(grip_enabled=False)),
@@ -214,6 +226,218 @@ def test_full_profile_keeps_transient_slots_and_others_drop_them():
     assert dropped["channels"][0]["transients"] == []
 
 
+def injector():
+    from sensa_multiband import TransientInjector
+
+    return TransientInjector()
+
+
+def attack(source, level=.30):
+    """安静 4 个 chunk 后跳到大电平；不消费触发结果，留给调用方 take() 或 compose_frame 取走。"""
+    for _ in range(4):
+        source.push(chunk(.01))
+        source.take()
+    source.push(chunk(level))
+
+
+def test_a_rising_edge_in_the_source_injects_one_transient_slot():
+    both = injector()
+    attack(both)
+    assert both.take() == (True, True)
+
+    source = injector()
+    for _ in range(4):
+        source.push(chunk(.01))
+        source.take()
+    source.push(chunk(.30, .01))
+    # 幅度 = 本帧主导频带峰值 14 × SLOT_GAIN 0.65 = 9；时间固定在帧首：攻击已经发生，不能延后。
+    sides = decode_frame(compose_frame(DUAL, MixState(), source))["channels"]
+    assert sides[0]["transients"] == [{"amplitude_code": 9, "frequency_code": 7, "time_ms": 0}]
+    assert sides[1]["transients"] == []
+
+
+def test_a_sustained_level_fires_once_on_its_onset_and_then_stays_quiet():
+    source = injector()
+    source.push(chunk(.30))
+    assert source.take() == (True, True)
+    for _ in range(8):
+        source.push(chunk(.30))
+        assert source.take() == (False, False)
+    for _ in range(4):
+        source.push(chunk(.01))
+        source.take()
+    source.push(chunk(.30))
+    assert source.take() == (True, True)
+
+
+def test_one_attack_cannot_fire_the_slot_twice():
+    source = injector()
+    attack(source)
+    assert source.take() == (True, True)
+    # 同一次攻击继续爬升（.30→.50 超过 1.6 倍）不是新攻击。
+    source.push(chunk(.50))
+    assert source.take() == (False, False)
+
+
+def test_a_jump_inside_the_noise_floor_never_injects():
+    source = injector()
+    for _ in range(4):
+        source.push(chunk(.001))
+        source.take()
+    source.push(chunk(.015))
+    assert source.take() == (False, False)
+
+
+def test_a_pending_edge_is_consumed_even_when_the_output_is_silenced():
+    source = injector()
+    attack(source)
+    silenced = MixState(settings=Settings(grip_enabled=False))
+    assert compose_frame(DUAL, silenced, source) == sensa_multiband.QUIET_FRAME
+    assert source.take() == (False, False)
+
+
+def test_injected_slots_cannot_overflow_the_six_bit_field():
+    from sensa_multiband import MAX_AMPLITUDE, pack_frame
+
+    loud = pack_frame({"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": MAX_AMPLITUDE, "frequency_code": 7}] * 4], "transients": []}
+        for _ in range(2)]})
+    source = injector()
+    attack(source)
+    composed = compose_frame(loud, MixState(settings=Settings(grip_gain=1.5)), source)
+    assert len(composed) <= 52
+    for side in decode_frame(composed)["channels"]:
+        assert [point["amplitude_code"] for band in side["bands"] for point in band] == [63] * 4
+        assert side["transients"] == [{"amplitude_code": 41, "frequency_code": 7, "time_ms": 0}]
+
+
+def test_injection_follows_the_profiles_that_already_send_transient_slots():
+    source = injector()
+    attack(source)
+    state = MixState(settings=Settings(haptic_profile="dynamic"))
+    assert all(not side["transients"] for side in decode_frame(compose_frame(DUAL, state, source))["channels"])
+
+
+def test_encoder_transients_keep_their_slots_ahead_of_injected_ones():
+    from sensa_multiband import pack_frame
+
+    pair = pack_frame({"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": 14, "frequency_code": 7}] * 4],
+         "transients": [{"amplitude_code": 20, "frequency_code": 30, "time_ms": 12},
+                        {"amplitude_code": 21, "frequency_code": 31, "time_ms": 20}]}
+        for _ in range(2)]})
+    source = injector()
+    attack(source)
+    state = MixState(settings=Settings(haptic_profile="full"))
+    assert [slot["time_ms"]
+            for slot in decode_frame(compose_frame(pair, state, source))["channels"][0]["transients"]] == [12, 20]
+
+
+def test_edges_in_different_chunks_of_one_batch_both_survive():
+    source = injector()
+    for _ in range(4):
+        source.push(chunk(.01))
+        source.take()
+    source.push(chunk(.30, .01))
+    source.push(chunk(.30, .30))
+    # 一批里可能编码多个 10ms 块；左右分别在不同块起振时后一个不能顶掉前一个。
+    assert source.take() == (True, True)
+
+
+def test_the_injected_slot_follows_the_dominant_band_not_the_first_one():
+    from sensa_multiband import pack_frame
+
+    high = pack_frame({"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": 8, "frequency_code": 7}] * 4,
+                   [{"amplitude_code": 20, "frequency_code": 41}] * 4], "transients": []}
+        for _ in range(2)]})
+    source = injector()
+    attack(source)
+    slots = [side["transients"] for side in decode_frame(compose_frame(high, MixState(), source))["channels"]]
+    assert slots == [[{"amplitude_code": 13, "frequency_code": 41, "time_ms": 0}]] * 2
+
+
+def test_a_silenced_side_gets_no_slot_even_though_its_edge_fired():
+    source = injector()
+    attack(source)
+    state = MixState(settings=Settings(grip_gain_left=0.0, grip_gain_right=1.0))
+    sides = decode_frame(compose_frame(DUAL, state, source))["channels"]
+    assert sides[0]["transients"] == []
+    assert sides[1]["transients"] == [{"amplitude_code": 9, "frequency_code": 7, "time_ms": 0}]
+
+
+def test_injection_after_classic_rumble_replaced_the_bands_stays_in_range():
+    from sensa_multiband import pack_frame
+
+    source = injector()
+    attack(source)
+    composed = compose_frame(DUAL, MixState(rumble=(1.0, 1.0)), source)
+    assert len(composed) <= 52
+    assert pack_frame(decode_frame(composed)) == composed
+    for side in decode_frame(composed)["channels"]:
+        assert [point["amplitude_code"] for band in side["bands"] for point in band] == [63] * 4
+        assert side["transients"] == [{"amplitude_code": 41, "frequency_code": 7, "time_ms": 0}]
+
+
+def test_slot_gain_is_the_level_the_hardware_ab_test_approved():
+    """0.65 不是算出来的，是实机拖出来的：强度 1.0 时「更猛烈浑厚、过了」，拖到 0.65 变「挺好」。
+
+    槽 65% 落在 91Hz 以下、最大一档正好是 sensa-device.json 声明的 FrequencyResonance=50，
+    等幅叠加等于在共振点双倍驱动。降电平就治好了，说明是过驱不是选错频率
+    （蜘蛛侠 2 的打击内容本身就低频主导）。改这个数等于改一次已验收的手感，要有新的实机依据。
+    """
+    from sensa_multiband import SLOT_GAIN
+
+    assert SLOT_GAIN == .65
+
+
+def test_the_transient_switch_is_read_from_settings_on_every_batch():
+    output, encoder, mixer = backend()
+    mailbox = PcmMailbox()
+    try:
+        for enabled in (False, True, False):
+            mailbox.configure(MixState(settings=Settings(haptic_transient=enabled)), now=1)
+            mailbox.push(chunk(.01) * 3 + chunk(.30), now=1)
+            output.render_pcm(mailbox.take(now=1), now=1)
+            assert bool(decode_frame(mixer.play.call_args[0][1])["channels"][0]["transients"]) is enabled
+        assert encoder.encode.call_count == 12
+    finally:
+        output.close()
+
+
+def test_the_transient_switch_leaves_an_ascii_line_every_time_it_changes(capsys):
+    # 必须是 ASCII：托盘把桥接 stdout 写进日志时编码是坏的，中文一律变成 U+FFFD 且不可恢复，
+    # 用中文就等于这行证据在日志里读不出来。开和关都要留行，否则无法区分「关了」和「没生效」。
+    output, _, _ = backend()
+    mailbox = PcmMailbox()
+    try:
+        for enabled, expected in ((True, "haptic transient: on"), (True, None), (False, "haptic transient: off")):
+            mailbox.configure(MixState(settings=Settings(haptic_transient=enabled)), now=1)
+            mailbox.push(chunk(.01), now=1)
+            output.render_pcm(mailbox.take(now=1), now=1)
+            out = capsys.readouterr().out
+            if expected is None:
+                assert "haptic transient" not in out
+            else:
+                assert expected in out
+    finally:
+        output.close()
+
+
+def test_render_pcm_feeds_the_injector_from_the_same_chunks_the_encoder_gets():
+    output, encoder, mixer = backend()
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(MixState(settings=Settings(haptic_transient=True)), now=1)
+        mailbox.push(chunk(.01) * 3 + chunk(.30), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        assert encoder.encode.call_count == 4
+        sent = decode_frame(mixer.play.call_args[0][1])
+        assert sent["channels"][0]["transients"] == [{"amplitude_code": 9, "frequency_code": 7, "time_ms": 0}]
+    finally:
+        output.close()
+
+
 def test_full_profile_is_two_bands_with_short_windows_for_punch():
     from pcm_encoder import game_profile
 
@@ -224,6 +448,21 @@ def test_full_profile_is_two_bands_with_short_windows_for_punch():
     assert all(band["amplitude_window_length"] == .03 for band in bands)
     assert all(band["frequency_window_length"] == .08 for band in bands)
     assert profile["compressor"] == {"amp_limit": 1, "amp_comp": .5, "amp_comp_ratio": .5, "gamma": 3}
+
+
+def test_full_profile_keeps_its_analysis_floor_at_the_actuator_floor():
+    """分析下限不要下探到 30Hz 以下：实机试过一轮就被否，听成「太浑厚」。
+
+    2026-11-03 把 bands[0].frequency_range.min 从 30 放到 5（legacy 档的「宽进窄出」写法），
+    离线四项指标全变好：活跃 59.8→60.1%、孤立段 6.9→6.6%、峰值 p90 47→49、包络相关 0.595→0.612。
+    实机否掉了。机制是源里 22.4% 的 30Hz 以下能量被算进幅度估计后，按 30–100Hz 发出去，
+    等于把深沉低频翻成持续轰鸣。包络相关升高恰恰因为它奖励「跟上源里的低频泥」，那不是还原度。
+    """
+    from pcm_encoder import game_profile
+
+    low = game_profile("full")["underlying_bands"]["bands"][0]
+    assert low["frequency_range"]["min"] == 30
+    assert low["output_frequency_range"] == {"min": 30, "max": 100}
 
 
 def test_full_profile_keeps_faint_frames_other_profiles_clear():
@@ -301,19 +540,53 @@ def test_profile_change_reaches_the_encoder_once():
         output.close()
 
 
-def test_dynamic_profile_makes_up_its_quieter_low_band():
+def sampled(amplitude, bands=1):
     from sensa_multiband import pack_frame
 
-    def sampled(amplitude):
-        return {"duration_ms": 40, "channels": [
-            {"bands": [[{"amplitude_code": amplitude, "frequency_code": 7} for _ in range(4)]],
-             "transients": []} for _ in range(2)]}
+    frequencies = (7, 41, 74)[:bands]
+    return pack_frame({"duration_ms": 40, "channels": [
+        {"bands": [[{"amplitude_code": amplitude, "frequency_code": code} for _ in range(4)]
+                   for code in frequencies], "transients": []} for _ in range(2)]})
 
-    frame = pack_frame(sampled(10))
+
+def test_dynamic_profile_makes_up_its_quieter_low_band():
+    frame = sampled(10)
     assert totals(compose_frame(frame, MixState())) == [10, 10]
     assert totals(compose_frame(frame, MixState(settings=Settings(haptic_profile="dynamic")))) == [20, 20]
-    loud = pack_frame(sampled(20))
-    assert totals(compose_frame(loud, MixState(settings=Settings(haptic_profile="dynamic")))) == [32, 32]
+    # 2.0 补偿必须真的落到输出上：20 × 2 = 40。旧的 32 上限会把它钳回 32，
+    # 补偿在中强段完全空转（统一乘再按固定合计归一，数学上互相抵消）。
+    assert totals(compose_frame(sampled(20), MixState(settings=Settings(haptic_profile="dynamic")))) == [40, 40]
+
+
+def test_loud_frames_reach_the_full_six_bit_range_instead_of_half():
+    from sensa_multiband import MAX_AMPLITUDE
+
+    assert MAX_AMPLITUDE == 63
+    # 两带各 60，合计 120 超过任何上限；压到 63 而不是 32，才用满 6 位幅度码。
+    assert totals(compose_frame(sampled(60, bands=2), MixState())) == [62, 62]
+
+
+def test_grip_gain_stays_linear_for_frames_the_old_ceiling_flattened():
+    # 原始合计 50：旧的 32 上限把 1.0/0.9/0.8 三档全压成 32，旋钮在中强段没有分辨力。
+    frame = sampled(25, bands=2)
+    scaled = [totals(compose_frame(frame, MixState(settings=Settings(grip_gain=gain))))[0]
+              for gain in (1.0, .9, .8, .6)]
+    assert scaled == [50, 44, 40, 30]
+    assert scaled == sorted(scaled, reverse=True)
+
+
+def test_ceiling_cannot_push_a_code_past_the_six_bit_field():
+    from sensa_multiband import MAX_AMPLITUDE
+
+    # 单带满幅 + 1.5 增益 + 动态档 2.0 补偿：钳位是唯一挡住 6 位溢出的东西。
+    # 上限若放到 126（两带合计容量），单带时峰值会被算到 126，写进 6 位字段会串位毁帧；
+    # 63 是「合计上限同时保证每个码合法」的最大取值。
+    assert MAX_AMPLITUDE <= 63
+    state = MixState(settings=Settings(grip_gain=1.5, haptic_profile="dynamic"))
+    for side in decode_frame(compose_frame(sampled(63), state))["channels"]:
+        for band in side["bands"]:
+            for point in band:
+                assert 0 <= point["amplitude_code"] <= 63
 
 
 def test_balanced_plus_only_lowers_the_detection_threshold():
@@ -449,3 +722,25 @@ def test_frame_trace_records_sent_frames_and_stops_at_the_limit(tmp_path):
     assert [row["t"] for row in rows] == [0.0, 0.01, 0.02]
     assert rows[0]["sent"] == DUAL.hex() and rows[0]["raw"] == LEFT.hex()
     assert rows[0]["changed"] is True
+
+
+def test_frame_trace_records_the_encoder_frame_not_a_copy_of_the_sent_one(tmp_path, monkeypatch):
+    trace = FrameTrace(tmp_path / "frames.jsonl")
+    monkeypatch.setattr(sensa_multiband, "trace_enabled", lambda: True)
+    monkeypatch.setattr(sensa_multiband, "FrameTrace", lambda path=None: trace)
+    output, _, _ = backend()
+    mailbox = PcmMailbox()
+    state = MixState(settings=Settings(grip_gain_left=0.0, grip_gain_right=1.0))
+    try:
+        mailbox.configure(state, now=1)
+        mailbox.push(bytes(480 * 4), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+    finally:
+        output.close()
+    trace.flush()
+    row = json.loads((tmp_path / "frames.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    # raw 必须是编码器交出来的帧。旧代码把 compose_frame 的返回值同时写进 sent 和 raw，
+    # changed 恒为 False，钳位与地板到底改了什么在日志里完全看不见（2026-11-03 实机 23000 行全是死列）。
+    assert row["raw"] == DUAL.hex()
+    assert row["changed"] is True
+    assert totals(bytes.fromhex(row["sent"])) == [0, 26]

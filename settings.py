@@ -20,6 +20,9 @@ class Settings:
     grip_gain_right: float = None
     # PC 多频握把使用的雷蛇编码器 profile：默认“打击”（full）；legacy 为原双频带，其余档位抄自 Synapse 音频到触觉预设。
     haptic_profile: str = DEFAULT_PROFILE
+    # 检测到打击瞬间额外推一把（自造冲击槽）。默认关：默认手感必须等于实机验收过的那一版，
+    # 打开与否由用户当场 A/B 决定，不替他选。
+    haptic_transient: bool = False
     # 只影响界面动效，不影响桥接。
     reduce_motion: bool = False
     trigger_enabled: bool = True

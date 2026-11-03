@@ -54,6 +54,7 @@ class UiModel(QObject):
         self._grip_gain_left = round(settings.grip_gain_left * 100)
         self._grip_gain_right = round(settings.grip_gain_right * 100)
         self._haptic_profile = getattr(settings, "haptic_profile", DEFAULT_PROFILE)
+        self._haptic_transient = getattr(settings, "haptic_transient", False)
         self._reduce_motion = getattr(settings, "reduce_motion", False)
         self._audio_guard = settings.audio_guard
         self._hide_physical = settings.hide_physical
@@ -183,6 +184,10 @@ class UiModel(QObject):
         return self._haptic_profile
 
     @Property(bool, notify=settingsChanged)
+    def hapticTransient(self):
+        return self._haptic_transient
+
+    @Property(bool, notify=settingsChanged)
     def reduceMotion(self):
         return self._reduce_motion
 
@@ -275,14 +280,15 @@ class UiModel(QObject):
         values = (settings.grip_enabled, round(settings.grip_gain * 100),
                   round(settings.grip_gain_left * 100), round(settings.grip_gain_right * 100),
                   getattr(settings, "haptic_profile", DEFAULT_PROFILE),
+                  getattr(settings, "haptic_transient", False),
                   getattr(settings, "reduce_motion", False),
                   settings.audio_guard, settings.hide_physical)
         current = (self._grip_enabled, self._grip_gain, self._grip_gain_left, self._grip_gain_right,
-                   self._haptic_profile, self._reduce_motion, self._audio_guard,
+                   self._haptic_profile, self._haptic_transient, self._reduce_motion, self._audio_guard,
                    self._hide_physical)
         if values != current:
             (self._grip_enabled, self._grip_gain, self._grip_gain_left, self._grip_gain_right,
-             self._haptic_profile, self._reduce_motion, self._audio_guard,
+             self._haptic_profile, self._haptic_transient, self._reduce_motion, self._audio_guard,
              self._hide_physical) = values
             self.settingsChanged.emit()
 
@@ -340,6 +346,12 @@ class UiModel(QObject):
         self._haptic_profile = value
         self.settingsChanged.emit()
         self.settingsEdited.emit({"haptic_profile": value})
+
+    @Slot(bool)
+    def setHapticTransient(self, value):
+        self._haptic_transient = value
+        self.settingsChanged.emit()
+        self.settingsEdited.emit({"haptic_transient": value})
 
     @Slot(bool)
     def setReduceMotion(self, value):

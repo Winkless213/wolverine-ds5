@@ -44,6 +44,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(Settings.from_dict({"haptic_profile": "balanced_plus"}).haptic_profile, "balanced_plus")
         self.assertEqual(Settings.from_dict({"haptic_profile": "nope"}).haptic_profile, "full")
 
+    def test_haptic_transient_defaults_off_and_round_trips(self):
+        # 默认关：出货默认手感必须等于已实机验收过的那一版，加重要用户自己打开。
+        self.assertFalse(Settings().haptic_transient)
+        self.assertTrue(Settings.from_dict({"haptic_transient": True}).haptic_transient)
+        # 旧配置文件没有这个键；类型不对也不能当成 True。
+        self.assertFalse(Settings.from_dict({"grip_gain": 1.0}).haptic_transient)
+        self.assertFalse(Settings.from_dict({"haptic_transient": "yes"}).haptic_transient)
+
     def test_a_saved_profile_choice_is_kept(self):
         # 改默认值不迁移已保存的选择：用户明确选过的档位（包括旧版）保持不变。
         self.assertEqual(Settings.from_dict({"haptic_profile": "legacy"}).haptic_profile, "legacy")
