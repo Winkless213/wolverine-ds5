@@ -3,7 +3,6 @@ import base64
 import collections
 import json
 import os
-import pathlib
 import queue
 import subprocess
 import sys
@@ -12,7 +11,7 @@ import time
 
 import audio_guard
 import settings
-from capture_recorder import CaptureRecorder
+from capture_recorder import make_recorder, record as record_capture
 from gip_host import GipHost, UsbTransport
 from settings import Settings
 from trigger_mapper import TriggerPair
@@ -49,17 +48,7 @@ class Haptics:
         self.stalls = 0
         self.audio_errors = 0
         self.trace = TriggerTrace(os.environ.get("WOLVERINE_TRIGGER_TRACE_FLAG"))
-        self.recorder = self._make_recorder()
-
-    @staticmethod
-    def _make_recorder():
-        """WOLVERINE_PLAY_RECORD=1 时把游戏触觉音频录成 WAV，供离线分析频带覆盖。"""
-        if os.environ.get("WOLVERINE_PLAY_RECORD") != "1":
-            return None
-        directory = (pathlib.Path(os.environ.get("LOCALAPPDATA", ".")) / "WolverineDS5"
-                     / "captures" / time.strftime("%Y%m%d-%H%M%S"))
-        print(f"Recording haptic audio to {directory}", flush=True)
-        return CaptureRecorder(directory)
+        self.recorder = make_recorder()
 
     def mix(self, values, now):
         left, right, lt, rt = values
@@ -122,13 +111,7 @@ class Haptics:
         self.record(message)
 
     def record(self, message):
-        if self.recorder is not None and message["type"] in ("audio", "reset", "stopped"):
-            try:
-                self.recorder.accept(message)
-            except (ValueError, FileExistsError, OSError) as error:
-                # 录制是旁路诊断，缺样或写盘失败都不能影响震动输出。
-                print(f"capture recorder: {type(error).__name__}: {error}", flush=True)
-                self.recorder = None
+        self.recorder = record_capture(self.recorder, message)
 
     def step(self, l2, r2, now):
         self.test_pressure = (l2 / 255, r2 / 255)

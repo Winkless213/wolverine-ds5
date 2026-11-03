@@ -2,7 +2,10 @@
 import base64
 import json
 import math
+import os
+import pathlib
 import struct
+import time
 import wave
 
 
@@ -15,6 +18,32 @@ def decode_audio_block(message):
             or not 0 < frames <= 48 or len(pcm) != frames * 4 or first < 0 or generation < 1):
         raise ValueError("Invalid raw haptics block")
     return generation, first, frames, source, pcm
+
+
+def make_recorder():
+    """WOLVERINE_PLAY_RECORD=1 时把游戏触觉音频录成 WAV，供离线分析频带覆盖。
+
+    PC 与 Xbox 两条路径共用这一个工厂；开关曾经只在 Xbox 路径生效，PC 模式设了也没反应，
+    所以开着时必须留一行目录，让人一眼看出到底有没有录上。
+    """
+    if os.environ.get("WOLVERINE_PLAY_RECORD") != "1":
+        return None
+    directory = (pathlib.Path(os.environ.get("LOCALAPPDATA", ".")) / "WolverineDS5"
+                 / "captures" / time.strftime("%Y%m%d-%H%M%S"))
+    print(f"Recording haptic audio to {directory}", flush=True)
+    return CaptureRecorder(directory)
+
+
+def record(recorder, message):
+    """旁路录像：缺样或写盘失败只关掉录像，绝不影响震动输出。返回仍然可用的 recorder。"""
+    if recorder is None or message["type"] not in ("audio", "reset", "stopped"):
+        return recorder
+    try:
+        recorder.accept(message)
+    except (ValueError, FileExistsError, OSError) as error:
+        print(f"capture recorder: {type(error).__name__}: {error}", flush=True)
+        return None
+    return recorder
 
 
 class CaptureRecorder:

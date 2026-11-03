@@ -12,7 +12,7 @@ import gip_bridge
 import pc_bridge
 import sdl_input
 from gip_bridge import Status
-from pc_bridge import LIMIT, RUMBLE_HZ, GripHaptics
+from pc_bridge import LIMIT, RUMBLE_HZ, GripHaptics, NullGrips
 from settings import Settings
 from test_capture_recorder import block
 from test_pcm_to_sensa import pcm_tones
@@ -144,6 +144,58 @@ class GripHapticsTests(unittest.TestCase):
         gip_bridge.handle_command(self.haptics, {"type": "settings", "settings": {"grip_gain": .3}})
         gip_bridge.handle_command(self.haptics, {"type": "test", "target": "grip"})
         self.assertEqual((self.haptics.settings.grip_gain, self.haptics.test_target), (.3, "grip"))
+
+
+class RecorderTests(unittest.TestCase):
+    """PC 模式此前完全没有旁路录像，而且开关失效时没有任何提示。"""
+
+    @staticmethod
+    def recording(folder):
+        with patch.dict(os.environ, {"WOLVERINE_PLAY_RECORD": "1", "LOCALAPPDATA": folder}):
+            grips = FakeGrips()
+            return grips, GripHaptics(grips)
+
+    def test_pc_path_records_the_game_haptic_stream(self):
+        with tempfile.TemporaryDirectory() as folder:
+            _, haptics = self.recording(folder)
+            self.assertIsNotNone(haptics.recorder)
+            feed(haptics, pcm_tones(((.4, 120),), frames=2400))
+            haptics.recorder.close()
+            captures = list(Path(folder, "WolverineDS5", "captures").glob("*/capture.json"))
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(json.loads(captures[0].read_text(encoding="utf-8"))["frames"], 2400)
+            self.assertEqual(len(list(captures[0].parent.glob("usb-host-*.wav"))), 1)
+
+    def test_switch_off_leaves_the_pc_path_without_a_recorder(self):
+        with patch.dict(os.environ, {"WOLVERINE_PLAY_RECORD": "0"}):
+            self.assertIsNone(GripHaptics(FakeGrips()).recorder)
+
+    def test_recorder_failure_does_not_stop_haptic_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            grips, haptics = self.recording(folder)
+            haptics.recorder.accept = Mock(side_effect=OSError("disk full"))
+            feed(haptics, pcm_tones(((.4, 120),), frames=2400))
+            self.assertIsNone(haptics.recorder)
+            haptics.step(0, 0, now=.01)
+            self.assertGreater(grips.sides[0][0], 0)
+
+    def test_malformed_audio_still_reaches_the_recorder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            _, haptics = self.recording(folder)
+            broken = block(1, 0, b"\0" * 4, "usb-host")
+            broken["frames"] = 10
+            haptics.accept(broken, now=0)
+            # 录像自己会因为坏块降级成 None，但必须先收到这条消息，否则丢样无从察觉。
+            self.assertIsNone(haptics.recorder)
+
+    def test_detaching_the_controller_closes_the_recording(self):
+        with tempfile.TemporaryDirectory() as folder:
+            _, haptics = self.recording(folder)
+            recorder = haptics.recorder
+            recorder.close = Mock(wraps=recorder.close)
+            haptics.attach(NullGrips())
+            self.assertIsNone(haptics.recorder)
+            recorder.close.assert_called_once()
 
 
 class OpenTests(unittest.TestCase):

@@ -1,10 +1,12 @@
 import base64
+import os
 import tempfile
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from capture_recorder import CaptureRecorder
+from capture_recorder import CaptureRecorder, make_recorder, record
 
 
 def block(generation, first, pcm, source="synthetic"):
@@ -63,6 +65,38 @@ class CaptureRecorderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 recorder.accept(data)
             recorder.close()
+
+
+class SwitchTests(unittest.TestCase):
+    """开关与旁路降级由两条路径共用，所以在这里而不是各自的桥接里测。"""
+
+    def test_switch_off_returns_no_recorder(self):
+        for value in ("0", "", "true"):
+            with patch.dict(os.environ, {"WOLVERINE_PLAY_RECORD": value}):
+                self.assertIsNone(make_recorder(), f"WOLVERINE_PLAY_RECORD={value!r} 不该开录")
+        os.environ.pop("WOLVERINE_PLAY_RECORD", None)
+        self.assertIsNone(make_recorder())
+
+    def test_switch_on_writes_under_localappdata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {"WOLVERINE_PLAY_RECORD": "1", "LOCALAPPDATA": folder}):
+                recorder = make_recorder()
+            self.assertIsNotNone(recorder)
+            recorder.accept(block(1, 0, b"\0" * 4, "usb-host"))
+            recorder.close()
+            self.assertEqual(len(list(Path(folder, "WolverineDS5", "captures").glob("*/capture.json"))), 1)
+
+    def test_record_passes_through_messages_the_recorder_ignores(self):
+        recorder = Mock()
+        self.assertIs(record(recorder, {"type": "output"}), recorder)
+        self.assertIs(record(recorder, {"type": "status"}), recorder)
+        recorder.accept.assert_not_called()
+        self.assertIsNone(record(None, {"type": "audio"}))
+
+    def test_record_disables_itself_on_failure_instead_of_raising(self):
+        recorder = Mock()
+        recorder.accept.side_effect = OSError("disk full")
+        self.assertIsNone(record(recorder, {"type": "audio"}))
 
 
 if __name__ == "__main__":

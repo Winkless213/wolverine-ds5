@@ -14,7 +14,7 @@ import threading
 import time
 
 import gip_bridge
-from capture_recorder import decode_audio_block
+from capture_recorder import decode_audio_block, make_recorder, record as record_capture
 from input_timing import InputCadence
 from pcm_to_sensa import ENVELOPE_LIMIT, EnvelopeToSensa
 from sdl_input import RazerInput, input_state
@@ -257,12 +257,18 @@ class GripHaptics:
         self.previous = [QUIET, QUIET]
         self.stats = {"audio_frames": 0, "audio_resyncs": 0, "audio_errors": 0, "timeouts": 0}
         self.trace = GripTrace(os.environ.get("WOLVERINE_GRIP_TRACE_FLAG"), seconds=30)
+        # PC 模式此前没有旁路录像：GripHaptics 不继承 gip_bridge.Haptics，
+        # WOLVERINE_PLAY_RECORD=1 设了也没反应，而且没有任何提示。
+        self.recorder = make_recorder()
         self.rumble_report = None
         self.rumble_reports = self.nonzero_rumble_reports = 0
 
     def attach(self, output):
         if isinstance(output, NullGrips):
             self.trace.close(time.monotonic())
+            if self.recorder is not None:
+                self.recorder.close()
+                self.recorder = None
         # 新输出是静止的；记录清零后下一步把当前状态完整发一次。
         self.output = output
         self.previous = [QUIET, QUIET]
@@ -279,6 +285,12 @@ class GripHaptics:
         self.last_audio = None
 
     def accept(self, message, now):
+        self._accept(message, now)
+        # 与 gip_bridge.Haptics 一致：无论这条消息处理成功与否都交给录像；
+        # 录像自身出错只降级成 None，不影响震动输出。
+        self.recorder = record_capture(self.recorder, message)
+
+    def _accept(self, message, now):
         kind = message["type"]
         if kind == "output":
             report = base64.b64decode(message["report"], validate=True)
