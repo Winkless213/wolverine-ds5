@@ -292,11 +292,12 @@ begin
 end;
 
 // 需要重启时：重启后自动打开程序，并让它在第一次自检后主动汇报结果。
+// 标记文件必须放在运行时根目录（onedir 的 _internal），程序按 core.root_dir() 找它。
 procedure QueueFirstRun;
 begin
   if (not SelfTestPassed) or (not NeedRestart) then
     Exit;
-  SaveStringToFile(ExpandConstant('{app}\first-run.pending'), '1', False);
+  SaveStringToFile(ExpandConstant('{app}\_internal\first-run.pending'), '1', False);
   RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce',
     'WolverineDS5FirstRun', '"' + ExpandConstant('{app}\{#AppExe}') + '"');
 end;

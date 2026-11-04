@@ -23,7 +23,7 @@
   新增 `tools/quit-app.ps1` 供安装器提前收尾。
 
 产物：`WolverineDS5.exe` `c6095664…b35c`，`WolverineDS5-bridge.exe` `0dd3eae0…fc23`，
-安装包 `work/release/installer/Wolverine-DS5-Setup-1.1.46.exe` `29167d97…c1de`（59.6 MB，未签名）。
+安装包 `work/release/installer/Wolverine-DS5-Setup-1.1.46.exe` `e36dd9d2…4e3b`（59.6 MB，未签名）。
 
 ## 1.1.45（2026-11-04）
 

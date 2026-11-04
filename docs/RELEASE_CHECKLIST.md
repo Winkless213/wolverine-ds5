@@ -17,7 +17,7 @@
 - 候选包：`dist/candidate-1.1.46`，`package-check.json` 的 `passed` 必须为 `true`
   （`source_unchanged_during_build`、`manifest` 也要为 `true`）。
 - 安装包：`work/release/installer/Wolverine-DS5-Setup-1.1.46.exe`
-  （59.6 MB，SHA256 `29167d97bdc8b96cdabe3c2d24ca8177b95e516d826469053c137115f535c1de`，未签名）。
+  （59.6 MB，SHA256 `e36dd9d28b0efebff2e0959f4b469dd465f06c1c3da7ba1dd782c3655f5c4e3b`，未签名）。
 - 版本号唯一来源：`app/__init__.py`；`WolverineDS5.spec` 把它写进 exe，安装器编译时用 `GetFileProductVersionString` 校验一致。
 - 包内只带三个脚本：`install-dependencies.ps1`、`uninstall-cleanup.ps1`、`swap_winusb.ps1`；
   设备级改类的 `set_class.ps1` 不进用户安装包。`quit-app.ps1` 只给安装器临时解包用，不落盘。
@@ -115,6 +115,8 @@ USBip 必须**完整安装**：`usbip2_ude`（虚拟主机控制器）+ `usbip2_
   `%LOCALAPPDATA%\WolverineDS5\logs\native-exit.log` 记录 `原生恢复完成`（说明走了原生恢复，不是强杀）。
 - 自检分级：在无手柄状态下 `--diagnose` 输出 `state=blocked / core_ready=false`，
   `checks[].scope` 分别为 core/grips；雷云相关失败落在 grips，不再把按键链路判死。
+- 首次自检标记：安装器写到 `{app}\_internal\first-run.pending`（运行时根目录，不是 `{app}`）；
+  手动放入该文件后启动程序，标记被消费、进程正常退出，说明"重启后主动汇报"这条链路可用。
 - UI 截图（`output/frontend-qa/`，真实 QML 渲染）：
   `status-update-1180-v1.png`、`status-update-min-v1.png`（980×760 最小档）、
   `system-degraded-1180-v1.png`——琥珀色「按键可用，握把未就绪」横幅、底部「发现新版 1.1.47」入口
