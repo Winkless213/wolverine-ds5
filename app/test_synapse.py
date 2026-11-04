@@ -20,6 +20,10 @@ EMPTY = "[2026/10/30 10:21:41.360] info: *** ~ Dashboard ~ devices shown in dash
 LISTED = ('[2026/10/30 10:29:37.208] info: *** ~ Dashboard ~ devices shown in dashboard '
           '[{"productId":2636,"realProductId":2636,"deviceContainerId":"{61219129-17CC-11F1-8671-444648929145}"}]')
 MORNING = datetime.datetime(2026, 10, 30, 10, 20, 40)
+# 登记之后雷蛇会打印一次设备元数据，设备名就在这里面。
+METADATA = ('[2026-10-30 10:29:41.907][5312] [RzInterHaptics.RpcClient] [info] '
+            'RpcClient::GetMetadata deviceID: "2636-{61219129-17cc-11f1-8671-444648929145}", '
+            'metadata: "{"Bodypart":[],"DeviceName":"Sage T1","Manufacturer":"Razer"}"')
 
 
 class GripDiagnosisTests(unittest.TestCase):
@@ -34,6 +38,26 @@ class GripDiagnosisTests(unittest.TestCase):
     def test_registration_follows_the_latest_device_event(self):
         self.assertTrue(synapse.device_registered([REMOVED, ADDED]))
         self.assertFalse(synapse.device_registered([ADDED, REMOVED]))
+
+    def test_registration_reports_when_and_which_device(self):
+        at, name = synapse.registration([ADDED, METADATA])
+        self.assertEqual(at, datetime.datetime(2026, 10, 30, 10, 29, 41))
+        self.assertEqual(name, "Sage T1")
+
+    def test_a_removed_device_has_no_registration_left(self):
+        at, name = synapse.registration([ADDED, METADATA, REMOVED])
+        self.assertIsNone(at)
+        self.assertEqual(name, "")
+
+    def test_inspect_returns_the_state_and_the_registration_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "haptic.log").write_text("\n".join([ADDED, METADATA]), encoding="utf-8")
+            (root / "dashboard2.log").write_text("\n".join([LISTED]), encoding="utf-8")
+            state, info = synapse.inspect(root / "haptic.log", root)
+        self.assertEqual(state, "ready")
+        self.assertEqual(info["name"], "Sage T1")
+        self.assertEqual(info["at"], datetime.datetime(2026, 10, 30, 10, 29, 41))
 
     def test_service_restart_or_lost_synapse_drops_the_registration(self):
         for reset in (RESTART, LOST):

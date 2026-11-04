@@ -3,7 +3,17 @@
 每个候选包都用 `tools/build_candidate.py` 构建并通过 `package-check.json`（`passed: true`）；
 发布包另有安装器产物与哈希，见 `RELEASE_CHECKLIST.md`。
 
-## 1.1.46（当前发布候选，2026-11-04）
+## 1.1.47（当前发布候选，2026-11-04）
+
+- 自检的「雷云已就绪」会写明**几点把哪台设备交给了握把服务**（如 `13:35 交给握把服务 · Sage T1`）。
+  依据是雷蛇 HapticService 日志里最近一次 `DeviceAdded` 与其后的设备元数据；设备被移除或服务重启则清空。
+  这样「雷云根本没交出手柄」和「交过去了但设备侧设置不对」能一眼分开，不用先导日志。
+- `synapse.inspect()` 一次读日志同时返回状态与登记信息，`diagnose()` 保持原接口不变。
+
+产物：`WolverineDS5.exe` `1046dfcc…2e05`，`WolverineDS5-bridge.exe` `a90ecd6c…8e74`，
+安装包 `work/release/installer/Wolverine-DS5-Setup-1.1.47.exe` `e35ac901…e326`（59.6 MB，未签名）。
+
+## 1.1.46（2026-11-04）
 
 这一版修的是「发给别人之后会遇到什么」，不是新功能。
 

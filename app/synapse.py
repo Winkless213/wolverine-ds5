@@ -18,6 +18,9 @@ RESETS = ("Establishing connection", "RpcPing failed")
 OFFLINE = "No internet connection found"
 LISTED = "devices shown in dashboard [{"
 DASHBOARD_TIME = re.compile(r"\[(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d)")
+# 自检里显示「几点登记、哪台设备」，用于区分「没交给握把服务」和「交进去了但设置不对」。
+STAMP = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.")
+DEVICE_NAME = re.compile(r'"DeviceName":"([^"]+)"')
 TAIL_BYTES = 1 << 20
 # 拉起雷云后的观察窗口：startfile 成功不代表引擎站住，实测见过它 6 秒后自己退出。
 START_TIMEOUT = 8.0
@@ -112,23 +115,50 @@ def dashboard_offline(directory, started):
 def diagnose(haptic_log=None, dashboard_dir=None):
     """握把为什么还不能震：ready / stopped（雷云没运行）/ offline（雷云离线，没加载手柄）/
     unregistered（雷云在线但还没认出手柄）；读不到雷蛇日志时返回 unknown，交回桥接自己的判断。"""
+    return inspect(haptic_log, dashboard_dir)[0]
+
+
+def registration(lines):
+    """最近一次 DeviceAdded 的时间与设备名；作废或没登记时返回 (None, "")。
+
+    支持排障时区分「雷云根本没把手柄交给握把服务」和「交进去了但设备侧设置不对」：
+    后者日志里照样有 DeviceAdded，只是握把不出力。
+    """
+    at, name = None, ""
+    for line in lines:
+        if any(reset in line for reset in RESETS) or REMOVED in line:
+            at, name = None, ""
+        elif ADDED in line:
+            stamp = STAMP.match(line)
+            at = datetime.datetime.strptime(stamp[1], "%Y-%m-%d %H:%M:%S") if stamp else None
+            name = ""
+        elif at is not None and DEVICE_NAME.search(line):
+            name = DEVICE_NAME.search(line)[1]
+    return at, name
+
+
+def inspect(haptic_log=None, dashboard_dir=None):
+    """返回 (state, registration)；registration 形如 {"at": datetime, "name": "Sage T1"}。"""
     if haptic_log is None:
         haptic_log = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"),
                           "Razer/RazerAppEngine/Logs/RzInterHaptics-HapticService.log")
     if dashboard_dir is None:
         dashboard_dir = Path(os.environ.get("LOCALAPPDATA", ""), "Razer/RazerAppEngine/User Data/Logs")
     try:
-        registered = device_registered(tail_lines(haptic_log))
+        lines = tail_lines(haptic_log)
     except OSError:
-        return "unknown"
+        return "unknown", {}
+    registered = device_registered(lines)
+    at, name = registration(lines)
+    info = {"at": at, "name": name} if at is not None else {}
     if registered is None:
-        return "unknown"
+        return "unknown", info
     if registered:
-        return "ready"
+        return "ready", info
     started = started_at()
     if started is None:
-        return "stopped"
-    return "offline" if dashboard_offline(dashboard_dir, started) else "unregistered"
+        return "stopped", info
+    return ("offline" if dashboard_offline(dashboard_dir, started) else "unregistered"), info
 
 
 def launcher_path():

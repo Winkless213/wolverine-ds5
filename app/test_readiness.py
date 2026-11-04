@@ -1,4 +1,5 @@
 """启动自检：每条检查都要能单独失败、给出人话和修复动作；就绪判定不能靠桥接自报。"""
+import datetime
 import pathlib
 import sys
 
@@ -272,6 +273,16 @@ def test_grips_off_ignores_a_dead_grip_service(tmp_path):
     report = build_report(facts(tmp_path, settings=Settings(grip_enabled=False), bridge_state={
         "state": "connected", "grips_ready": False, "grip_error": "No Sensa device"}))
     assert by_id(report, "bridge").state == OK
+
+
+def test_ready_synapse_says_when_and_which_device(tmp_path):
+    # 支持排障：先说清「几点交给握把服务、哪台设备」，再谈设置对不对。
+    report = build_report(facts(tmp_path, synapse_registration={
+        "at": datetime.datetime(2026, 11, 4, 13, 35, 10), "name": "Sage T1"}))
+    check = by_id(report, "synapse")
+    assert check.state == OK
+    assert "13:35" in check.detail
+    assert "Sage T1" in check.detail
 
 
 def test_encoder_mismatch_degrades_and_offers_a_prefilled_report(tmp_path):

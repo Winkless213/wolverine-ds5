@@ -1,4 +1,4 @@
-# 发布验收清单（1.1.46）
+# 发布验收清单（1.1.47）
 
 发布前按本清单逐项打勾；任一项失败就回到上一个已验证候选包，不在未知状态上继续叠加。
 构建与校验流程见 `tools/build_candidate.py`；安装器编译见本文件末尾。
@@ -7,17 +7,17 @@
 
 | 文件 | SHA256 |
 | --- | --- |
-| `WolverineDS5.exe` | `c60956646fb0052d7edaec448545135ccb0142efc51107d8f8ddcfddf053b35c` |
-| `WolverineDS5-bridge.exe` | `0dd3eae00d28a1cc7b6de435d08e7b2409528a628ff0cf9698e080d26d8ffc23` |
+| `WolverineDS5.exe` | `1046dfcc699d83fd6d724a822baa1b0dc7a06cd1cccdd4201465f2859f662e05` |
+| `WolverineDS5-bridge.exe` | `a90ecd6c51107d0730795d5a5f072b353776c3f35eda8527953f27be019a8e74` |
 | `_internal/wolverine-capture.exe` | `998b81e8841fa71f484a88a7b92c591449c6e984beab66e5110425d8e09b5033` |
 | `_internal/SDL3.dll` | `2b4b128d8d510cc2d442693cf848c050d700d43dc667afe9e5fd82b0570d667e` |
 | `_internal/package-hash.json` | 由构建生成，含 2099 条文件哈希；`package-check.json` 里 `manifest: true` |
 | `_internal/tools/uninstall-cleanup.ps1` | 见安装目录同文件（1.1.46 起先 `--quit` 再兜底强杀） |
 
-- 候选包：`dist/candidate-1.1.46`，`package-check.json` 的 `passed` 必须为 `true`
+- 候选包：`dist/candidate-1.1.47`，`package-check.json` 的 `passed` 必须为 `true`
   （`source_unchanged_during_build`、`manifest` 也要为 `true`）。
-- 安装包：`work/release/installer/Wolverine-DS5-Setup-1.1.46.exe`
-  （59.6 MB，SHA256 `e36dd9d28b0efebff2e0959f4b469dd465f06c1c3da7ba1dd782c3655f5c4e3b`，未签名）。
+- 安装包：`work/release/installer/Wolverine-DS5-Setup-1.1.47.exe`
+  （59.6 MB，SHA256 `e35ac901d3af243ae7b0290e975fa084e3144278b6915f0e1691806cb57fe326`，未签名）。
 - 版本号唯一来源：`app/__init__.py`；`WolverineDS5.spec` 把它写进 exe，安装器编译时用 `GetFileProductVersionString` 校验一致。
 - 包内只带三个脚本：`install-dependencies.ps1`、`uninstall-cleanup.ps1`、`swap_winusb.ps1`；
   设备级改类的 `set_class.ps1` 不进用户安装包。`quit-app.ps1` 只给安装器临时解包用，不落盘。
@@ -103,7 +103,24 @@ USBip 必须**完整安装**：`usbip2_ude`（虚拟主机控制器）+ `usbip2_
 - 安装器产物保留在 `work/release/installer/`，命名带版本号，回滚时重装旧版本即可；
   卸载会清理计划任务与 HidHide 配置，`%LOCALAPPDATA%\WolverineDS5` 下的日志与设置不删除（人工确认后再删）。
 
-## 6. 本机实测证据（1.1.46，2026-11-04 13:2x）
+## 6. 本机实测证据（1.1.46 / 1.1.47，2026-11-04）
+
+1.1.47（真机在线、升级、卸载全流程）：
+
+- 真机全绿：手柄 PC 模式、雷云在线时 `--diagnose` 输出 `state=ready`，10 项检查全为 ok/skip。
+- 桥接日志 `{"state": "connected", "backend": "sensa", "grips_ready": true}`；输入 999.3–999.6 Hz；
+  虚拟 DualSense 挂在 Port 01（Sony 054c:0ce6，High Speed 480Mbps，zero-copy）。
+- 全链路测试 `chain test: 330 frames`（左 1.5s + 0.3s + 右 1.5s），用户确认左右握把都震。
+- 升级时程序正在运行：对运行中的 1.1.46 覆盖安装，退出码 0、耗时 17.1 秒；
+  `native-exit.log` 新增「原生恢复完成」，说明走的是 `--quit` 正路而不是强杀。
+- 卸载重测：`uninstall_exit=0`，结果文件
+  `restore_native=ok / delete_task=ok / autostart=removed / usbip_untouched=ok / result=ok`；
+  `usbip2_ude`、`usbip2_filter`、`HidHide` 服务前后状态一致；进程与安装目录清空；随后装回并重新连上。
+- 握把服务登记信息上界面：`13:35 交给握把服务 · Sage T1`（`output/frontend-qa/system-realreport-1180-v1.png`）。
+- 音频到触觉：2026-10-30 实测不影响握把（默认输出放 20 秒 45 Hz 强低频，桥接运行与停止两种情况握把输出都为 0）；
+  代码里没有任何拦截逻辑，也不需要拦截。
+
+1.1.46（构建、覆盖安装、首启提示）：
 
 - 构建：`--base dist/candidate-1.1.45 --out dist/candidate-1.1.46`，`package-check.json`
   `passed=true / manifest=true / source_unchanged_during_build=true`；回归 184 项通过。
@@ -150,15 +167,13 @@ USBip 必须**完整安装**：`usbip2_ude`（虚拟主机控制器）+ `usbip2_
 
 ```powershell
 # 候选包（源码改动必须列进 --allow，否则 package-check 不通过）
-python tools/build_candidate.py --base dist/candidate-1.1.45 --out dist/candidate-1.1.46 `
-  --allow app/__init__.py app/main.py app/readiness.py app/ui_model.py app/update.py `
-          app/test_readiness.py app/test_update.py app/test_app.py `
-          tools/uninstall-cleanup.ps1 tools/build_candidate.py `
-  --allow-asset ui/StatusPage.qml --marker multiband.enabled
+python tools/build_candidate.py --base dist/candidate-1.1.46 --out dist/candidate-1.1.47 `
+  --allow app/__init__.py app/synapse.py app/readiness.py app/test_synapse.py app/test_readiness.py `
+  --marker multiband.enabled
 
 # 安装包（版本号与候选包 exe 版本必须一致）
 & "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe" `
-  /DAppVersion=1.1.46 /DAppSrc=..\dist\candidate-1.1.46\WolverineDS5 installer\WolverineDS5.iss
+  /DAppVersion=1.1.47 /DAppSrc=..\dist\candidate-1.1.47\WolverineDS5 installer\WolverineDS5.iss
 ```
 
 注意：构建期间不要改仓库里的 `*.py`（`source_unchanged_during_build` 会变 false，得重建）。

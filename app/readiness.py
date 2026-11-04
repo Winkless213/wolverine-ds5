@@ -171,6 +171,8 @@ class Facts:
     synapse_installed: bool | None = None
     synapse_running: bool | None = None
     synapse_state: str | None = None
+    # 最近一次 DeviceAdded 的时间与设备名；用来区分「没交给握把服务」和「交进去了但设置不对」。
+    synapse_registration: dict = field(default_factory=dict)
     encoder_path: pathlib.Path | None = None
     encoder_sha: str | None = None
     encoder_expected: str = pcm_encoder.ENCODER_SHA256
@@ -247,7 +249,13 @@ def check_synapse(facts):
     if state == "unknown":
         return Check("synapse", "读不到雷云日志", WARN,
                      "无法确认手柄是否已登记；如果握把测试有输出，可以继续")
-    return Check("synapse", "雷云已就绪", OK)
+    detail = ""
+    registration = facts.synapse_registration or {}
+    if registration.get("at") is not None:
+        detail = f"{registration['at']:%H:%M} 交给握把服务"
+        if registration.get("name"):
+            detail += f" · {registration['name']}"
+    return Check("synapse", "雷云已就绪", OK, detail)
 
 
 def check_encoder(facts):
@@ -459,9 +467,9 @@ def gather_facts(root=None, settings=None, mode=None, instance=None, bridge_runn
     try:
         installed = synapse.find_shortcut() is not None
         running = synapse.is_running()
-        state = synapse.diagnose()
+        state, registration = synapse.inspect()
     except Exception:
-        installed, running, state = None, None, "unknown"
+        installed, running, state, registration = None, None, "unknown", {}
     encoder = pcm_encoder.encoder_path()
     sha = _digest(encoder) if hashes and encoder.exists() else None
     multi = os.environ.get("WOLVERINE_MULTIBAND") == "1" or (root / "multiband.enabled").exists()
@@ -471,7 +479,8 @@ def gather_facts(root=None, settings=None, mode=None, instance=None, bridge_runn
                  bridge_state=bridge_state or {}, settings=settings, hide_state=hide_state,
                  hide_error=hide_error, usbip_exe=exe, usbip_ports=ports, usbip_services=usbip_services(),
                  synapse_installed=installed,
-                 synapse_running=running, synapse_state=state, encoder_path=encoder, encoder_sha=sha,
+                 synapse_running=running, synapse_state=state, synapse_registration=registration,
+                 encoder_path=encoder, encoder_sha=sha,
                  multiband=multi, conflicts=found_conflicts, stale=tuple(stale),
                  audio_frames=audio_frames, audio_age=audio_age, environment_only=environment_only)
 
