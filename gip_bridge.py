@@ -142,8 +142,13 @@ def handle_command(haptics, command):
         return True
     if command.get("type") == "settings" and isinstance(command.get("settings"), dict):
         haptics.settings = Settings.from_dict(command["settings"])
-    elif command.get("type") == "test" and command.get("target") in ("grip", "trigger", None):
-        haptics.test_target = command["target"]
+    elif command.get("type") == "test":
+        target = command.get("target")
+        if target == "chain":
+            # 全链路测试：让输出线程用真编码器跑一段合成 PCM；计数加一即触发一次。
+            haptics.chain_request = getattr(haptics, "chain_request", 0) + 1
+        elif target in ("grip", "trigger", None):
+            haptics.test_target = target
     return False
 
 
@@ -173,15 +178,23 @@ def read_capture_output(proc, events):
 
 
 def attach_virtual_ds5(address, busid, run=subprocess.run):
-    """桥接重启后 usbip-win2 不会自动重新导入；本端已挂上时跳过，避免出现两个 DS5。"""
+    """桥接重启后 usbip-win2 不会自动重新导入；本端已挂上时跳过，避免出现两个 DS5。
+
+    返回空字符串表示成功/已挂载，否则返回给界面显示的错误文本——attach 失败只打印，
+    界面会永远停在“等待手柄”，这是之前最难查的静默失败之一。
+    """
     exe = os.environ.get("GIP_BRIDGE_USBIP_EXE", r"C:\Program Files\USBip\usbip.exe")
     host, port = address.rsplit(":", 1)
     ports = run([exe, "port"], capture_output=True, text=True).stdout
     if f"usbip://{address}/{busid}" in ports:
         print("Virtual DualSense already attached", flush=True)
-        return
+        return ""
     result = run([exe, "-t", port, "attach", "-r", host, "-b", busid, "--once"], capture_output=True, text=True)
-    print(f"usbip attach: {(result.stdout or result.stderr).strip()}", flush=True)
+    message = (result.stdout or result.stderr).strip()
+    print(f"usbip attach: {message}", flush=True)
+    if result.returncode:
+        return f"usbip attach 失败（退出码 {result.returncode}）：{message or '没有输出'}"
+    return ""
 
 
 class Status:
@@ -310,12 +323,12 @@ def serve(capture_proc, make_haptics=lambda saved: Haptics(NullOutput(), saved),
 
     events = queue.Queue()
     threading.Thread(target=read_capture_output, args=(capture_proc, events), daemon=True).start()
-    attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
+    attach_error = attach_virtual_ds5(ready_msg["address"], ready_msg["busid"])
 
     haptics = make_haptics(settings.load())
     audio_guard.start(enabled=lambda: haptics.settings.audio_guard)
     counts = collections.Counter()
-    STATUS.set("waiting")
+    STATUS.set("waiting", **({"attach_error": attach_error} if attach_error else {}))
 
     def wait():
         # 等手柄期间照常消费 capture 输出，重连后用的是最新扳机效果而不是积压的旧消息。

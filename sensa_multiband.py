@@ -46,6 +46,8 @@ class MixState:
     rumble: tuple = (0.0, 0.0)
     test_target: str | None = None
     pressures: tuple = (0.0, 0.0)
+    # 每次「全链路测试」加一；输出线程看到新值就用真编码器跑一遍合成 PCM。
+    chain: int = 0
 
 
 @dataclass(frozen=True)
@@ -278,6 +280,29 @@ class PcmMailbox:
             return batch
 
 
+def chain_chunks(seconds=1.5, gap=.3):
+    """全链路测试音：左 1.5s → 静音 0.3s → 右 1.5s。
+
+    频率取 50Hz（马达谐振点）+ 150Hz（高频带），两条带都会被编码器看到；
+    严格按 10ms 块输出，和游戏音频走同一个 `PcmEncoder.encode` 入口。
+    """
+    total, silence = int(seconds / .01), int(gap / .01)
+    for index in range(total):
+        yield tone_chunk(index, side=0)
+    for _ in range(silence):
+        yield bytes(CHUNK_BYTES)
+    for index in range(total):
+        yield tone_chunk(index, side=1)
+
+
+def tone_chunk(index, side, frames=480, rate=48000):
+    t = (np.arange(frames) + index * frames) / rate
+    wave = (0.45 * np.sin(2 * np.pi * 50 * t) + 0.15 * np.sin(2 * np.pi * 150 * t)) * 32767
+    samples = np.zeros((frames, 2), dtype="<i2")
+    samples[:, side] = wave.astype("<i2")
+    return samples.tobytes()
+
+
 class MultibandGrips:
     def __init__(self, encoder_factory=PcmEncoder, mixer_factory=Mixer, target_finder=find_pc_device):
         self.encoder = self.mixer = None
@@ -294,6 +319,9 @@ class MultibandGrips:
         self.trace = FrameTrace() if trace_enabled() else None
         self.injector = TransientInjector()
         self.transient_on = None
+        self.chain_token = 0
+        self.chain_frames = []
+        self.chain_next = 0.0
         try:
             self.encoder = encoder_factory()
             self.mixer = mixer_factory()
@@ -325,6 +353,29 @@ class MultibandGrips:
             self.epoch = batch.epoch
             self.pending.clear()
             self.raw = QUIET_FRAME
+        if batch.state.chain != self.chain_token:
+            # 新一次全链路测试：清掉游戏音频，用真编码器把合成 PCM 编成帧，再按 10ms 节奏下发。
+            self.chain_token = batch.state.chain
+            self.pending.clear()
+            self.raw = QUIET_FRAME
+            self.chain_frames = self._chain_frames() if self.chain_token else []
+            self.chain_next = now
+            if self.chain_frames:
+                print(f"chain test: {len(self.chain_frames)} frames", flush=True)
+        if self.chain_frames:
+            if now >= self.chain_next:
+                raw = self.chain_frames.pop(0)
+                try:
+                    frame = compose_frame(raw, replace(batch.state, test_target=None), None)
+                except ValueError as error:
+                    self.rejected_frames += 1
+                    if self.rejected_frames == 1:
+                        print(f"PCM 帧被跳过：{error}", flush=True)
+                else:
+                    self.mixer.play(self.target, frame)
+                    self.last_sent, self.last_frame = now, frame
+                self.chain_next = now + .01
+            return
         self.pending.extend(batch.pcm)
         while len(self.pending) >= CHUNK_BYTES:
             chunk = bytes(self.pending[:CHUNK_BYTES])
@@ -355,6 +406,12 @@ class MultibandGrips:
                 # raw 必须是编码器交出来的帧，不是 compose_frame 的返回值：
                 # 两者同值时 changed 恒为 False，钳位和地板做了什么在日志里完全看不见。
                 self.trace.record(now, raw_frame, self.raw, batch.state)
+
+    def _chain_frames(self):
+        frames = []
+        for chunk in chain_chunks():
+            frames.append(self.encoder.encode(chunk))
+        return frames
 
     def close(self):
         try:

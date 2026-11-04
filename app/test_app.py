@@ -1,8 +1,10 @@
+import dataclasses
 import json
 import os
 import pathlib
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -35,6 +37,7 @@ def wait_for(condition, timeout=10):
 class FakeBridge(QObject):
     status = Signal(dict)
     meter = Signal(dict)
+    stats = Signal(dict)
     running = Signal(bool)
     log = Signal(str)
 
@@ -119,11 +122,14 @@ class FakeSystem:
 
 
 class AppTests(unittest.TestCase):
-    def make_app(self, mode="pc", saved=None):
+    def make_app(self, mode="pc", saved=None, hide_physical=False):
         directory = pathlib.Path(tempfile.mkdtemp())
         path = directory / "settings.json"
         if saved:
             settings.save(saved, path)
+        else:
+            # 多数用例只想验证桥接/状态逻辑：显式写死隐藏开关，别让默认值把流程改成“先隐藏再启动”。
+            settings.save(dataclasses.replace(settings.Settings(), hide_physical=hide_physical), path)
         bridge, system = FakeBridge(), FakeSystem(mode)
         app = App(bridge, system, settings_path=path, log_dir=directory)
         app.start(show=False)
@@ -665,6 +671,18 @@ class BridgeProcessTests(unittest.TestCase):
         self.assertIn('"state": "waiting"', log_text)
         self.assertIn('echo:{"type": "settings"', log_text)
         self.assertNotIn('"meter"', log_text)
+
+
+class QuitProtocolTests(unittest.TestCase):
+    """安装器、卸载器靠这条协议请旧实例自己退出；没在运行必须当成已经退出。
+
+    真正的收发由安装包实测覆盖（两个 QLocalSocket 在没有事件循环的测试线程里不可靠）。
+    """
+
+    def test_no_running_instance_counts_as_quit(self):
+        from app.main import request_quit
+
+        self.assertEqual(request_quit(f"WolverineDS5-absent-{os.getpid()}", timeout_ms=300), 0)
 
 
 if __name__ == "__main__":

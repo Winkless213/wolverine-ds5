@@ -90,6 +90,16 @@ class GripDiagnosisTests(unittest.TestCase):
 
 
 class SynapseTests(unittest.TestCase):
+    def setUp(self):
+        # 默认没有计划任务：快捷方式那批用例说的就是回退路径。
+        patcher = patch.object(synapse, "trigger_task", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # 默认不建任务：建任务要 UAC，测试里不能真弹。
+        register = patch.object(synapse, "register_task", return_value=False)
+        register.start()
+        self.addCleanup(register.stop)
+
     def test_running_synapse_is_not_launched_again(self):
         with patch.object(synapse, "is_running", return_value=True), \
                 patch.object(synapse, "find_shortcut") as find, patch.object(synapse.os, "startfile") as launch:
@@ -176,3 +186,165 @@ class SynapseTests(unittest.TestCase):
                 patch.object(synapse.os, "startfile", side_effect=OSError("launch failed")):
             with self.assertRaises(OSError):
                 synapse.ensure_running()
+
+
+class TriggerTaskTests(unittest.TestCase):
+    def test_registered_task_is_triggered_by_name(self):
+        run = Mock(return_value=Mock(returncode=0))
+        self.assertTrue(synapse.trigger_task(run=run))
+        run.assert_called_once_with(["schtasks.exe", "/run", "/tn", synapse.TASK_NAME],
+                                    stdout=synapse.subprocess.DEVNULL, stderr=synapse.subprocess.DEVNULL,
+                                    timeout=synapse.TASK_TIMEOUT, creationflags=synapse.CREATE_NO_WINDOW)
+
+    def test_task_that_is_not_registered_is_not_triggered(self):
+        self.assertFalse(synapse.trigger_task(run=Mock(return_value=Mock(returncode=1))))
+
+    def test_scheduler_that_cannot_be_called_is_not_triggered(self):
+        self.assertFalse(synapse.trigger_task(run=Mock(side_effect=OSError("no scheduler"))))
+        self.assertFalse(synapse.trigger_task(run=Mock(side_effect=TimeoutError)))
+
+    def test_slow_scheduler_is_treated_as_submitted(self):
+        # 任务拉起的雷云继承句柄时 schtasks 可能一直不退出；这时不能报“没触发”。
+        self.assertTrue(synapse.trigger_task(run=Mock(side_effect=synapse.subprocess.TimeoutExpired("schtasks", 15))))
+
+    def test_task_start_needs_no_shortcut(self):
+        state = {"t": 0.0}
+
+        def wait(seconds):
+            state["t"] += seconds
+
+        def clock():
+            return state["t"]
+
+        with patch.object(synapse, "is_running", return_value=False), \
+                patch.object(synapse, "find_shortcut", return_value=Path("Razer Synapse.lnk")), \
+                patch.object(synapse.os, "startfile") as launch:
+            result = synapse.ensure_running(wait=wait, clock=clock, probe=lambda: state["t"] >= 0.5,
+                                            trigger=lambda: True)
+        self.assertEqual(result, "started")
+        launch.assert_not_called()
+
+    def test_task_that_cannot_wake_synapse_falls_back_to_the_shortcut(self):
+        state = {"t": 0.0, "launched": False}
+
+        def wait(seconds):
+            state["t"] += seconds
+
+        def clock():
+            return state["t"]
+
+        def probe():
+            # 任务那次没拉起来；只有快捷方式拉起的引擎站得住。
+            return state["launched"]
+
+        def launch(path, show_cmd=0):
+            state["launched"] = True
+
+        with patch.object(synapse, "is_running", return_value=False), \
+                patch.object(synapse, "find_shortcut", return_value=Path("Razer Synapse.lnk")), \
+                patch.object(synapse.os, "startfile", side_effect=launch) as started:
+            result = synapse.ensure_running(wait=wait, clock=clock, probe=probe, trigger=lambda: True)
+        self.assertEqual(result, "started")
+        started.assert_called_once()
+
+
+class TaskCleanupTests(unittest.TestCase):
+    def test_delete_removes_the_registered_task(self):
+        run = Mock(return_value=Mock(returncode=0))
+        with patch.object(synapse, "task_registered", return_value=False):
+            self.assertTrue(synapse.delete_task(run=run))
+        run.assert_called_once_with(["schtasks.exe", "/delete", "/tn", synapse.TASK_NAME, "/f"],
+                                    stdout=synapse.subprocess.DEVNULL, stderr=synapse.subprocess.DEVNULL,
+                                    timeout=synapse.TASK_TIMEOUT, creationflags=synapse.CREATE_NO_WINDOW)
+
+    def test_delete_reports_failure_when_the_task_is_still_there(self):
+        with patch.object(synapse, "task_registered", return_value=True):
+            self.assertFalse(synapse.delete_task(run=Mock(return_value=Mock(returncode=1))))
+
+    def test_task_that_never_existed_counts_as_deleted(self):
+        with patch.object(synapse, "task_registered", return_value=False):
+            self.assertTrue(synapse.delete_task(run=Mock(return_value=Mock(returncode=1))))
+
+
+class RegisterTaskTests(unittest.TestCase):
+    def test_registration_creates_a_highest_privilege_logon_task(self):
+        seen = {}
+
+        def elevate(executable, arguments):
+            seen["exe"], seen["args"] = executable, arguments
+            return True
+
+        state = {"queries": 0}
+
+        def task_query(run=None):
+            state["queries"] += 1
+            return state["queries"] > 1
+
+        with patch.object(synapse, "launcher_path", return_value=Path(r"C:\Program Files\Razer\RazerAppEngine\RazerAppEngine.exe")), \
+                patch.object(synapse, "task_registered", side_effect=task_query):
+            self.assertTrue(synapse.register_task(elevate=elevate, wait=lambda seconds: None))
+        self.assertEqual(seen["exe"], "schtasks.exe")
+        for part in ("/create", synapse.TASK_NAME, "/sc onlogon", "/rl HIGHEST",
+                     r"C:\Program Files\Razer\RazerAppEngine\RazerAppEngine.exe", "--url-params=apps=synapse"):
+            self.assertIn(part, seen["args"])
+
+    def test_cancelled_consent_is_reported_as_failure(self):
+        with patch.object(synapse, "launcher_path", return_value=Path("RazerAppEngine.exe")), \
+                patch.object(synapse, "task_registered", return_value=False):
+            self.assertFalse(synapse.register_task(elevate=lambda exe, args: False, wait=lambda seconds: None))
+
+    def test_missing_synapse_install_never_asks_for_consent(self):
+        elevate = Mock()
+        with patch.object(synapse, "task_registered", return_value=False), \
+                patch.object(synapse, "launcher_path", return_value=None):
+            self.assertFalse(synapse.register_task(elevate=elevate))
+        elevate.assert_not_called()
+
+    def test_wake_creates_the_task_when_the_shortcut_cannot_start_synapse(self):
+        state = {"t": 0.0, "triggers": 0}
+
+        def wait(seconds):
+            state["t"] += seconds
+
+        def clock():
+            return state["t"]
+
+        def trigger():
+            state["triggers"] += 1
+            return state["triggers"] >= 2  # 任务建好后的第二次触发才真的拉起引擎
+
+        def probe():
+            return state["triggers"] >= 2
+
+        register = Mock(return_value=True)
+        with patch.object(synapse, "is_running", return_value=False), \
+                patch.object(synapse, "find_shortcut", return_value=Path("Razer Synapse.lnk")), \
+                patch.object(synapse.os, "startfile"):
+            result = synapse.ensure_running(wait=wait, clock=clock, probe=probe,
+                                            trigger=trigger, register=register)
+        self.assertEqual(result, "started")
+        register.assert_called_once()
+
+    def test_shortcut_that_works_never_asks_for_admin(self):
+        state = {"t": 0.0, "launched": False}
+
+        def wait(seconds):
+            state["t"] += seconds
+
+        def clock():
+            return state["t"]
+
+        def probe():
+            return state["launched"]
+
+        def launch(path, show_cmd=0):
+            state["launched"] = True
+
+        register = Mock(return_value=True)
+        with patch.object(synapse, "is_running", return_value=False), \
+                patch.object(synapse, "find_shortcut", return_value=Path("Razer Synapse.lnk")), \
+                patch.object(synapse.os, "startfile", side_effect=launch):
+            result = synapse.ensure_running(wait=wait, clock=clock, probe=probe,
+                                            trigger=lambda: False, register=register)
+        self.assertEqual(result, "started")
+        register.assert_not_called()

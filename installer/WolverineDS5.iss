@@ -45,7 +45,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
+CloseApplications=no
 RestartApplications=no
 LicenseFile=..\LICENSE
 AllowNoIcons=yes
@@ -57,34 +57,42 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标:"; Flags: checkedonce
 
+// 老版本把开发文档发给用户，1.1.46 起换成面向用户的使用说明；升级时清掉这些旧文件，免得文档对不上。
+[InstallDelete]
+Type: files; Name: "{app}\docs\DEVELOPMENT_LOG.md"
+Type: files; Name: "{app}\docs\TESTER_GUIDE.md"
+Type: files; Name: "{app}\docs\RELEASE_CHECKLIST.md"
+
 [Files]
 Source: "{#AppSrc}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\docs\DEVELOPMENT_LOG.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "..\docs\TESTER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\docs\USER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\docs\RELEASES.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\tools\install-dependencies.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\tools\uninstall-cleanup.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+// 只给安装器自己用：升级前请旧实例退出，装完不用留在磁盘上。
+Source: "..\tools\quit-app.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "..\reference-licenses\*"; DestDir: "{app}\reference-licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{group}\开发与实测记录"; Filename: "{app}\docs\DEVELOPMENT_LOG.md"
-Name: "{group}\使用说明"; Filename: "{app}\docs\TESTER_GUIDE.md"
+Name: "{group}\使用说明"; Filename: "{app}\docs\USER_GUIDE.md"
+Name: "{group}\更新记录"; Filename: "{app}\docs\RELEASES.md"
 Name: "{group}\卸载 {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "启动 {#AppName}"; Flags: nowait postinstall skipifsilent; Check: ShouldLaunchApp
 
+; 卸载前收尾：放开实体手柄、卸掉虚拟手柄、删除最高权限计划任务（脚本自己提权一次）。
+[UninstallRun]
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\uninstall-cleanup.ps1"" -AppDir ""{app}"""; Flags: runhidden; RunOnceId: "wolverinecleanup"
+
 [Code]
 var
   SelfTestPassed: Boolean;
   DepsInstalled: Boolean;
-
-function ShouldLaunchApp: Boolean;
-begin
-  Result := SelfTestPassed;
-end;
 
 // USBip 和 HidHide 的驱动装完都要重启才生效，完成页据此要求重启。
 function NeedRestart: Boolean;
@@ -92,6 +100,35 @@ begin
   Result := DepsInstalled;
 end;
 
+function ShouldLaunchApp: Boolean;
+begin
+  // 需要重启时驱动还没生效，启动只会看到一片红；改成重启后由 RunOnce 自动打开并汇报结果。
+  Result := SelfTestPassed and not NeedRestart;
+end;
+
+// 请运行中的实例自己退出：它会先放开实体手柄、卸掉虚拟手柄，不会再留下两只手柄。
+// 直接覆盖运行中的文件会触发 Inno 的“重试/忽略”，忽略就装出半新半旧的目录。
+// 注意：旧版（1.1.45 及更早）不认识 --quit，会把它当普通启动，所以必须由脚本核实进程真的没了。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Exe, Params: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  Exe := ExpandConstant('{app}\{#AppExe}');
+  if not FileExists(Exe) then
+    Exit;
+  ExtractTemporaryFile('quit-app.ps1');
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\quit-app.ps1') +
+            '" -Exe "' + Exe + '"';
+  if Exec('powershell.exe', Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Exit;
+  Result := 'Wolverine DS5 还在运行，没能自动退出。' + #13#10 + #13#10 +
+            '请右键点击任务栏右下角的程序图标，选择「退出」，然后回到这里点「下一步」。' + #13#10 +
+            '这样它会先把实体手柄还给系统，再安装新版本。';
+end;
+
+// 安装不完整时不要把用户放进一个必然打不开的程序里。
 function RuntimeFilesPresent: Boolean;
 begin
   Result :=
@@ -105,6 +142,16 @@ begin
   Result :=
     FileExists(ExpandConstant('{pf}\USBip\usbip.exe')) or
     FileExists(ExpandConstant('{pf32}\USBip\usbip.exe'));
+end;
+
+// 官方安装包会同时注册 usbip2_ude（虚拟主机控制器）和 usbip2_filter（设备过滤驱动）。
+// 只装一半时本程序照样能用，但飞智 X-Haptics 这类工具会判「USBIP 驱动不符合要求」，
+// 所以这里按完整安装验收，缺哪个都重跑官方安装器修。
+function UsbipIncomplete: Boolean;
+begin
+  Result := UsbipPresent and
+    ((not RegKeyExists(HKLM64, 'SYSTEM\CurrentControlSet\Services\usbip2_ude')) or
+     (not RegKeyExists(HKLM64, 'SYSTEM\CurrentControlSet\Services\usbip2_filter')));
 end;
 
 // 官方说明 0.9.7.8 可能内存损坏导致蓝屏，0.9.8.0 修复并推荐升级；本程序按 0.9.8.0 实测，低于它的都提示升级。
@@ -170,14 +217,17 @@ begin
   if WizardSilent then
     Exit;
 
-  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or (not HidHidePresent) then
+  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or UsbipIncomplete or (not HidHidePresent) then
   begin
     Details := '';
     if not UsbipPresent then
       Details := Details + #13#10 + '  USBip-win2：未检测到'
     else if UsbipOutdated(UsbipVersion) then
       Details := Details + #13#10 + '  USBip-win2：当前 ' + UsbipVersion +
-                 '，需要升级到 {#UsbipMinVersion}（官方推荐版本，修复了 0.9.7.8 的蓝屏问题）';
+                 '，需要升级到 {#UsbipMinVersion}（官方推荐版本，修复了 0.9.7.8 的蓝屏问题）'
+    else if UsbipIncomplete then
+      Details := Details + #13#10 + '  USBip-win2：驱动不完整（缺少 usbip2_ude 或 usbip2_filter），' +
+                 '飞智 X-Haptics 等工具会报驱动不符合要求，将重新运行官方安装器修复';
     if not HidHidePresent then
       Details := Details + #13#10 + '  HidHide：未检测到';
 
@@ -200,7 +250,12 @@ begin
           DepsInstalled := (StateOf(S, 'usbip') = 'installed') or (StateOf(S, 'hidhide') = 'installed');
           if (StateOf(S, 'usbip') = 'failed') or (StateOf(S, 'hidhide') = 'failed') then
             MsgBox('自动安装未全部成功。请按下面的地址手动安装后重新打开 Wolverine DS5。',
-                   mbError, MB_OK);
+                   mbError, MB_OK)
+          else if StateOf(S, 'usbip') = 'incomplete' then
+            MsgBox('USBip 驱动仍不完整（缺少 usbip2_ude 或 usbip2_filter）。' + #13#10 +
+                   '本程序自身可以工作，但飞智 X-Haptics 等工具会报驱动不符合要求。' + #13#10 +
+                   '请重启一次后重新运行安装包；仍不完整就手动重新安装 USBip {#UsbipMinVersion}。',
+                   mbInformation, MB_OK);
         end;
       end
       else
@@ -209,13 +264,16 @@ begin
     end;
   end;
 
-  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or (not HidHidePresent) then
+  if (not UsbipPresent) or UsbipOutdated(UsbipVersion) or UsbipIncomplete or (not HidHidePresent) then
   begin
     Details := '';
     if not UsbipPresent then
       Details := Details + '  USBip-win2：https://github.com/vadimgrn/usbip-win2' + #13#10
     else if UsbipOutdated(UsbipVersion) then
       Details := Details + '  USBip-win2 {#UsbipMinVersion}：' +
+                 'https://github.com/vadimgrn/usbip-win2/releases/tag/v.{#UsbipMinVersion}' + #13#10
+    else if UsbipIncomplete then
+      Details := Details + '  USBip-win2 {#UsbipMinVersion}（需重新安装以补全 usbip2_filter）：' +
                  'https://github.com/vadimgrn/usbip-win2/releases/tag/v.{#UsbipMinVersion}' + #13#10;
     if not HidHidePresent then
       Details := Details + '  HidHide：https://github.com/nefarius/HidHide' + #13#10;
@@ -233,8 +291,17 @@ begin
   end;
 end;
 
-function InitializeSetup: Boolean;
+// 需要重启时：重启后自动打开程序，并让它在第一次自检后主动汇报结果。
+procedure QueueFirstRun;
 begin
+  if (not SelfTestPassed) or (not NeedRestart) then
+    Exit;
+  SaveStringToFile(ExpandConstant('{app}\first-run.pending'), '1', False);
+  RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce',
+    'WolverineDS5FirstRun', '"' + ExpandConstant('{app}\{#AppExe}') + '"');
+end;
+
+function InitializeSetup: Boolean;begin
   Result := True;
   if not IsWin64 then
   begin
@@ -271,4 +338,5 @@ begin
   end;
 
   CheckAndFixDependencies;
+  QueueFirstRun;
 end;

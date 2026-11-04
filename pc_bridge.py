@@ -250,6 +250,8 @@ class GripHaptics:
         self.settings = settings or Settings()
         self.converter = EnvelopeToSensa()
         self.test_target = None
+        # 全链路测试：计数变化时输出线程用真编码器跑一段合成 PCM，验证编码器+Mixer+握把。
+        self.chain_request = 0
         self.audio = [QUIET, QUIET]
         self.rumble = (0.0, 0.0)
         self.generation = self.next_frame = 0
@@ -354,7 +356,8 @@ class GripHaptics:
             self.clear_audio()
             self.stats["timeouts"] += 1
         if self.pcm is not None:
-            self.pcm.configure(MixState(self.settings, self.rumble, self.test_target, (l2 / 255, r2 / 255)), now)
+            self.pcm.configure(MixState(self.settings, self.rumble, self.test_target,
+                                        (l2 / 255, r2 / 255), chain=self.chain_request), now)
         for side, value in enumerate(self.mix(l2, r2)):
             if value != self.previous[side]:
                 self.output.set(side, *value)
@@ -462,7 +465,8 @@ def session(devices, capture_proc, events, haptics, counts):
                                   "sticks": [state[axis] for axis in ("LX", "LY", "RX", "RY")]}), flush=True)
                 last_meter = now
             if now - last_stats >= 5.0:
-                print(json.dumps({"elapsed_s": round(now - start, 1), "input_updates": input_updates,
+                print(json.dumps({"type": "stats", "elapsed_s": round(now - start, 1),
+                                  "input_updates": input_updates,
                                   "input_reads": input_reads, "input_target_hz": 1000,
                                   "input_read_hz": round(input_reads / (now - start), 1),
                                   "grips": haptics.previous, **haptics.stats,

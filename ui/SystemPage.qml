@@ -110,5 +110,85 @@ Item {
             }
         }
 
+        Card {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 268
+            title: "自检"
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 3
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 26
+                    spacing: 8
+                    Text {
+                        text: appModel.readinessSummary
+                        color: appModel.readinessColor
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                    }
+                    Item { Layout.fillWidth: true }
+                    Rectangle {
+                        width: 88
+                        height: 24
+                        radius: 4
+                        color: "#1D1D1D"
+                        border.color: Theme.green
+                        border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "重新检查"
+                            color: Theme.green
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: appModel.requestRecheck()
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: appModel.readinessChecks
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 17
+                        spacing: 8
+                        Rectangle {
+                            width: 5
+                            height: 5
+                            radius: 2.5
+                            color: modelData.color
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        Text {
+                            text: modelData.title
+                            color: "#D8D8D8"
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 190
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: modelData.state
+                            color: modelData.color
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 46
+                        }
+                        Text {
+                            text: modelData.detail
+                            color: "#9C9C9C"
+                            font.pixelSize: 11
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }

@@ -23,6 +23,8 @@ class UiModel(QObject):
     testChanged = Signal()
     systemChanged = Signal()
     uptimeChanged = Signal()
+    readinessChanged = Signal()
+    updateChanged = Signal()
     toastRequested = Signal(str, str, str)
 
     settingsEdited = Signal(dict)
@@ -33,6 +35,10 @@ class UiModel(QObject):
     synapseRequested = Signal()
     openLogsRequested = Signal()
     exportLogsRequested = Signal()
+    readinessRequested = Signal()
+    fixRequested = Signal(str)
+    chainTestRequested = Signal()
+    openUpdateRequested = Signal()
 
     def __init__(self, settings, log_dir, parent=None):
         super().__init__(parent)
@@ -69,6 +75,23 @@ class UiModel(QObject):
         self._uptime = ""
         self._log_dir = str(log_dir)
         self._version = __version__
+        self._readiness_ready = False
+        self._readiness_summary = "正在检查…"
+        self._readiness_detail = ""
+        self._readiness_fix = ""
+        self._readiness_fix_text = ""
+        self._readiness_color = "#E8B454"
+        self._readiness_checks = []
+        self._update_version = ""
+        self._audio_state = "未开始"
+        self._audio_color = "#8A8A8A"
+        self._grip_error_title = ""
+        self._grip_error_detail = ""
+        self._hide_state_text = "检查中"
+        self._hide_color = "#8A8A8A"
+        self._ds5_color = "#8A8A8A"
+        self._sensa_color = "#8A8A8A"
+        self._game_color = "#8A8A8A"
 
     # ---- 只读状态 ----
 
@@ -152,6 +175,74 @@ class UiModel(QObject):
     @Property(str, notify=uptimeChanged)
     def uptime(self):
         return self._uptime
+
+    @Property(bool, notify=readinessChanged)
+    def readinessReady(self):
+        return self._readiness_ready
+
+    @Property(str, notify=readinessChanged)
+    def readinessSummary(self):
+        return self._readiness_summary
+
+    @Property(str, notify=readinessChanged)
+    def readinessDetail(self):
+        return self._readiness_detail
+
+    @Property(str, notify=readinessChanged)
+    def readinessFixText(self):
+        return self._readiness_fix_text
+
+    @Property(str, notify=readinessChanged)
+    def readinessColor(self):
+        return self._readiness_color
+
+    @Property("QVariantList", notify=readinessChanged)
+    def readinessChecks(self):
+        return self._readiness_checks
+
+    @Property(bool, notify=updateChanged)
+    def updateAvailable(self):
+        return bool(self._update_version)
+
+    @Property(str, notify=updateChanged)
+    def updateVersion(self):
+        return self._update_version
+
+    @Property(str, notify=systemChanged)
+    def audioState(self):
+        return self._audio_state
+
+    @Property(str, notify=systemChanged)
+    def audioColor(self):
+        return self._audio_color
+
+    @Property(str, notify=systemChanged)
+    def gripErrorTitle(self):
+        return self._grip_error_title
+
+    @Property(str, notify=systemChanged)
+    def gripErrorDetail(self):
+        return self._grip_error_detail
+
+    @Property(str, notify=systemChanged)
+    def hideStateText(self):
+        return self._hide_state_text
+
+    @Property(str, notify=systemChanged)
+    def ds5Color(self):
+        return self._ds5_color
+
+    @Property(str, notify=systemChanged)
+    def sensaColor(self):
+        return self._sensa_color
+
+    @Property(str, notify=systemChanged)
+    def gameColor(self):
+        return self._game_color
+
+    @Property(str, notify=systemChanged)
+    def hideColor(self):
+        return self._hide_color
 
     @Property(str, notify=settingsChanged)
     def logDirectory(self):
@@ -271,6 +362,54 @@ class UiModel(QObject):
         if uptime != self._uptime:
             self._uptime = uptime
             self.uptimeChanged.emit()
+
+    def set_readiness(self, data):
+        """data 来自 app.readiness.Report.to_dict()；失败项决定横幅文案与修复按钮。"""
+        checks = data.get("checks", []) if isinstance(data, dict) else []
+        colors = {"ok": "#44D62C", "warn": "#E8B454", "fail": "#F06A6A", "skip": "#6A6A6A"}
+        labels = {"ok": "正常", "warn": "提醒", "fail": "未通过", "skip": "跳过"}
+        self._readiness_checks = [{"title": item.get("title", ""),
+                                   "state": labels.get(item.get("state"), ""),
+                                   "color": colors.get(item.get("state"), "#8A8A8A"),
+                                   "detail": item.get("detail", "")} for item in checks]
+        blocker = next((item for item in checks if item.get("state") == "fail"), None)
+        self._readiness_ready = bool(data.get("ready"))
+        self._readiness_summary = data.get("summary", "自检完成" if not data.get("error") else "自检失败")
+        self._readiness_detail = (blocker or {}).get("detail", "") or data.get("error", "")
+        self._readiness_fix = (blocker or {}).get("fix", "")
+        self._readiness_fix_text = (blocker or {}).get("fix_text", "")
+        # 握把单独失败只算"降级"：横幅要显示，但不能用红字说整个程序不可用。
+        self._readiness_color = {"ready": "#44D62C", "degraded": "#E8B454"}.get(
+            data.get("state"), "#F06A6A")
+        self.readinessChanged.emit()
+
+    def set_update(self, version):
+        """发现新版本时在状态页角落挂一条；没有新版本或检查失败时保持为空。"""
+        version = version or ""
+        if version != self._update_version:
+            self._update_version = version
+            self.updateChanged.emit()
+
+    def set_audio_state(self, text, color):
+        if (text, color) != (self._audio_state, self._audio_color):
+            self._audio_state, self._audio_color = text, color
+            self.systemChanged.emit()
+
+    def set_grip_error(self, title, detail):
+        if (title, detail) != (self._grip_error_title, self._grip_error_detail):
+            self._grip_error_title, self._grip_error_detail = title, detail
+            self.systemChanged.emit()
+
+    def set_hide_state(self, text, color):
+        if (text, color) != (self._hide_state_text, self._hide_color):
+            self._hide_state_text, self._hide_color = text, color
+            self.systemChanged.emit()
+
+    def set_dots(self, ds5, sensa, game, hide):
+        if (ds5, sensa, game, hide) != (self._ds5_color, self._sensa_color, self._game_color, self._hide_color):
+            self._ds5_color, self._sensa_color = ds5, sensa
+            self._game_color, self._hide_color = game, hide
+            self.systemChanged.emit()
 
     def set_tray_available(self, available):
         self._tray = available
@@ -399,3 +538,22 @@ class UiModel(QObject):
     @Slot()
     def exportLogs(self):
         self.exportLogsRequested.emit()
+
+    @Slot()
+    def requestRecheck(self):
+        self.readinessRequested.emit()
+
+    @Slot()
+    def requestFix(self):
+        if self._readiness_fix:
+            self.fixRequested.emit(self._readiness_fix)
+
+    @Slot()
+    def requestChainTest(self):
+        if self._testable:
+            self.chainTestRequested.emit()
+
+    @Slot()
+    def openUpdate(self):
+        if self._update_version:
+            self.openUpdateRequested.emit()

@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -22,6 +23,12 @@ TAIL_BYTES = 1 << 20
 START_TIMEOUT = 8.0
 START_STABLE = 2.0
 START_POLL = .5
+# 雷云 4 在部分机器上只认管理员启动：普通权限拉起的引擎一秒内就退出（退出码 9，不写日志）。
+# 安装时注册的同名计划任务以最高权限代跑，触发它本身不需要 UAC。
+TASK_NAME = "WolverineDS5-RazerSynapse"
+TASK_TIMEOUT = 15.0
+TASK_REGISTER_TIMEOUT = 10.0
+CREATE_NO_WINDOW = 0x08000000
 
 
 def find_shortcut():
@@ -124,20 +131,93 @@ def diagnose(haptic_log=None, dashboard_dir=None):
     return "offline" if dashboard_offline(dashboard_dir, started) else "unregistered"
 
 
-def ensure_running(wait=None, clock=None, probe=None):
-    """启动雷云并确认它真的站住：startfile 成功只代表拉起了入口，引擎可能几秒后自己退出。
+def launcher_path():
+    """雷云启动器（版本无关的入口，任务里存的就是这个路径）。"""
+    for variable in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        base = os.environ.get(variable)
+        if not base:
+            continue
+        path = Path(base) / "Razer/RazerAppEngine/RazerAppEngine.exe"
+        if path.exists():
+            return path
+    return None
 
-    返回 running（本来就在跑）/ started（拉起并稳定住）/ failed（拉起了又退出）/ missing（没装）。
+
+def task_registered(run=None):
+    run = run or subprocess.run
+    try:
+        done = run(["schtasks.exe", "/query", "/tn", TASK_NAME],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=TASK_TIMEOUT, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(done, "returncode", 1) == 0
+
+
+def _run_as_admin(executable, arguments):
+    """走一次 UAC 拉起可执行文件；用户点取消时返回 False（ShellExecuteW 返回 <=32）。"""
+    import ctypes
+
+    code = ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, arguments, None, 0)
+    return code > 32
+
+
+def register_task(run=None, elevate=None, wait=None):
+    """建一个最高权限的登录任务，让雷云以后不用 UAC 也能被唤醒。
+
+    只在「普通快捷方式拉不起来」时才建；用户点取消就返回 False，交回原来的失败提示。
     """
+    run = run or subprocess.run
+    elevate = elevate or _run_as_admin
     wait = wait or time.sleep
-    clock = clock or time.monotonic
-    probe = probe or is_running
-    if probe():
-        return "running"
-    shortcut = find_shortcut()
-    if shortcut is None:
-        return "missing"
-    os.startfile(str(shortcut), show_cmd=0)
+    if task_registered(run):
+        return True
+    launcher = launcher_path()
+    if launcher is None:
+        return False
+    arguments = (f'/create /tn "{TASK_NAME}" /tr "\\"{launcher}\\" --url-params=apps=synapse" '
+                 f'/sc onlogon /rl HIGHEST /f')
+    if not elevate("schtasks.exe", arguments):
+        return False
+    for _ in range(int(TASK_REGISTER_TIMEOUT / START_POLL)):
+        wait(START_POLL)
+        if task_registered(run):
+            return True
+    return task_registered(run)
+
+
+def delete_task(run=None):
+    """卸载时删掉最高权限任务；任务不存在也算成功。"""
+    run = run or subprocess.run
+    try:
+        done = run(["schtasks.exe", "/delete", "/tn", TASK_NAME, "/f"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=TASK_TIMEOUT, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(done, "returncode", 1) == 0 or not task_registered(run)
+
+
+def trigger_task(run=None):
+    """用计划任务拉起雷云；没注册任务或调用失败时返回 False，交回普通快捷方式。
+
+    不接管道：任务拉起的雷云会继承句柄，管道永远等不到 EOF，实测能把整个检查线程卡死。
+    超时只说明没等到 schtasks 退出，任务可能已经提交，能不能站住交给 settled 判断。
+    """
+    run = run or subprocess.run
+    try:
+        done = run(["schtasks.exe", "/run", "/tn", TASK_NAME],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=TASK_TIMEOUT, creationflags=CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(done, "returncode", 1) == 0
+
+
+def settled(probe, wait, clock):
+    """引擎出现后要连续站住 START_STABLE 秒才算数；闪一下就退出的不报启动成功。"""
     seen = None
     deadline = clock() + START_TIMEOUT
     while clock() < deadline:
@@ -148,5 +228,33 @@ def ensure_running(wait=None, clock=None, probe=None):
             continue
         seen = now if seen is None else seen
         if now - seen >= START_STABLE:
-            return "started"
-    return "started" if probe() else "failed"
+            return True
+    return bool(probe())
+
+
+def ensure_running(wait=None, clock=None, probe=None, trigger=None, register=None):
+    """启动雷云并确认它真的站住：startfile 成功只代表拉起了入口，引擎可能几秒后自己退出。
+
+    顺序：计划任务（免 UAC）→ 开始菜单快捷方式 → 建计划任务后重试（会弹一次 UAC）。
+    返回 running（本来就在跑）/ started（拉起并稳定住）/ failed（拉起了又退出）/ missing（没装）。
+    """
+    wait = wait or time.sleep
+    clock = clock or time.monotonic
+    probe = probe or is_running
+    trigger = trigger or trigger_task
+    register = register or register_task
+    if probe():
+        return "running"
+    if trigger() and settled(probe, wait, clock):
+        return "started"
+    shortcut = find_shortcut()
+    if shortcut is None:
+        return "missing"
+    os.startfile(str(shortcut), show_cmd=0)
+    if settled(probe, wait, clock):
+        return "started"
+    # 实测：雷云 4 在部分机器上普通权限拉起后一秒内自杀（退出码 9）。这时补一个最高权限任务，
+    # 之后每次唤醒都走任务、不再弹 UAC；用户取消授权就当普通失败处理。
+    if register() and trigger() and settled(probe, wait, clock):
+        return "started"
+    return "failed"

@@ -146,6 +146,11 @@ class ParseLineTests(unittest.TestCase):
                          {"type": "log", "text": "GIP handshake complete in 2.38s"})
         self.assertEqual(parse_line('{"elapsed_s": 5.0}')["type"], "log")
 
+    def test_stats_lines_reach_the_ui_with_their_counters(self):
+        message = parse_line('{"type": "stats", "audio_frames": 120, "timeouts": 2}')
+        self.assertEqual(message["type"], "stats")
+        self.assertEqual(message["audio_frames"], 120)
+
 
 class BridgeEventsTests(unittest.TestCase):
     def test_disconnect_and_reconnect_produce_one_notification_each(self):

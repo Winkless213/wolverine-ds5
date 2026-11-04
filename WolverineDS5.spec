@@ -31,7 +31,11 @@ datas = collect_data_files("qfluentwidgets") + collect_data_files("libusb_packag
     ("SDL3.dll", "."),
     ("xbox-sensa-device.json", "."),
     ("sensa-device.json", "."),
-    ("tools/*.ps1", "tools"),
+    # 只随包带运行时真正会调用的脚本：依赖安装/卸载收尾需要，Xbox 模式还原需要 swap_winusb。
+    # 设备级的 set_class.ps1 是开发调试工具，不进用户安装包（避免误用或被安全软件误判后“手动清理”）。
+    ("tools/install-dependencies.ps1", "tools"),
+    ("tools/uninstall-cleanup.ps1", "tools"),
+    ("tools/swap_winusb.ps1", "tools"),
     ("reference-licenses/SDL-zlib.txt", "licenses"),
     ("reference-licenses/*", "licenses"),
     ("ui", "ui"),

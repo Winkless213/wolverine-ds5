@@ -22,7 +22,7 @@ def _tail(path, lines):
     return "\n".join(content)
 
 
-def build_diagnostic(log_dir, version, mode, settings, now=None, status=None):
+def build_diagnostic(log_dir, version, mode, settings, now=None, status=None, readiness=None):
     """返回可直接写盘的诊断文本。"""
     moment = now or datetime.datetime.now()
     log_dir = Path(log_dir)
@@ -39,6 +39,9 @@ def build_diagnostic(log_dir, version, mode, settings, now=None, status=None):
     # 桥接当前状态决定“测试按下去有没有输出”，反馈里必须带上，否则只能从日志里翻。
     lines += ["", "--- bridge status ---",
               json.dumps(status or {}, ensure_ascii=False, indent=2, default=str)]
+    # 自检结果把“哪一层断了”写清楚：环境、桥接、握把、游戏触觉各一条。
+    lines += ["", "--- readiness ---",
+              json.dumps(readiness or {}, ensure_ascii=False, indent=2, default=str)]
 
     for name in ("ui-errors.log", "native-exit.log", "startup.log"):
         path = log_dir / name
@@ -56,6 +59,11 @@ def build_diagnostic(log_dir, version, mode, settings, now=None, status=None):
     if traces:
         path = traces[-1]
         lines += ["", f"--- {path.name}（最后 500 行） ---", _tail(path, 500)]
+
+    frames = sorted(log_dir.glob("grip-frames-*.jsonl"))
+    if frames:
+        path = frames[-1]
+        lines += ["", f"--- {path.name}（最后 300 行） ---", _tail(path, 300)]
 
     return "\n".join(lines) + "\n"
 

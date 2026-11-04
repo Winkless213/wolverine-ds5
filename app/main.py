@@ -1,29 +1,79 @@
 """托盘程序入口：托管桥接子进程，把状态、设置和驱动切换接到窗口与托盘上。"""
 import ctypes
 import dataclasses
+import faulthandler
 import getpass
 import json
 import os
 import pathlib
+import platform
 import sys
 import threading
 import time
 import traceback
+import urllib.parse
+import webbrowser
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-from qfluentwidgets import Action, FluentIcon, MessageBox, SystemTrayMenu, Theme, setTheme, setThemeColor
 
-import settings
-from app import __version__, core, log_export, native, synapse
-from app.bridge import Bridge
-from app.qml_window import QmlWindow
-from app.ui_model import UiModel
-from app.window import MODE_TEXT, status_icon
+def _early_log_dir():
+    base = os.environ.get("LOCALAPPDATA") or str(pathlib.Path.home())
+    return pathlib.Path(base) / "WolverineDS5" / "logs"
+
+
+def _install_early_logging():
+    """PySide6 导入失败时不会有任何界面；先把 faulthandler 挂到固定文件上。"""
+    try:
+        directory = _early_log_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        stream = (directory / "startup-crash.log").open("a", encoding="utf-8", buffering=1)
+        faulthandler.enable(file=stream, all_threads=True)
+        return stream
+    except OSError:
+        return None
+
+
+_CRASH_STREAM = _install_early_logging()
+
+
+def _report_startup_failure(detail):
+    """导入失败时给中文提示：最常见原因是杀毒软件删了包里的 pyd/dll。
+
+    这时 Qt 可能根本没加载，只能用 Win32 MessageBox；日志已经写进 startup-crash.log。
+    """
+    try:
+        last = detail.strip().splitlines()[-1][:300] if detail.strip() else ""
+        message = ("程序文件缺失或被杀毒软件拦截，启动不了。\n\n"
+                   "1）把这个程序加入杀毒软件白名单；\n"
+                   "2）重新运行安装包修复（会重新自检）；\n"
+                   f"3）详细日志：{_early_log_dir() / 'startup-crash.log'}\n\n"
+                   f"{last}")
+        ctypes.windll.user32.MessageBoxW(None, message, "Wolverine DS5 启动失败", 0x10)
+    except Exception:
+        pass
+
+
+try:
+    from PySide6.QtCore import QObject, QTimer, Signal
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+    from qfluentwidgets import Action, FluentIcon, MessageBox, SystemTrayMenu, Theme, setTheme, setThemeColor
+
+    import settings
+    from app import __version__, core, log_export, native, readiness, synapse, update
+    from app.bridge import Bridge
+    from app.qml_window import QmlWindow
+    from app.ui_model import UiModel
+    from app.window import MODE_TEXT, status_icon
+except BaseException:
+    _detail = traceback.format_exc()
+    if _CRASH_STREAM is not None:
+        _CRASH_STREAM.write("import failure:\n" + _detail)
+        _CRASH_STREAM.flush()
+    _report_startup_failure(_detail)
+    sys.exit(3)
 
 NOTICES = {"connected": ("手柄已连接", "虚拟 DualSense 已就绪"),
            "lost": ("手柄已断开", "重新插上即可恢复，游戏无需重启"),
@@ -65,6 +115,8 @@ class App(QObject):
     native_done = Signal(object)
     synapse_done = Signal(str)
     grips_checked = Signal(str)
+    readiness_checked = Signal(object)
+    update_checked = Signal(str)
 
     def __init__(self, bridge, system, settings_path, log_dir):
         super().__init__()
@@ -91,6 +143,19 @@ class App(QObject):
         self.grips_were_ready = False
         self.grips_checking = False
         self.grips_next_check = 0
+        self.bridge_running = False
+        self.bridge_started_at = None
+        self.usbip_state = None
+        self.audio_frames = 0
+        self.audio_seen_at = None
+        self.audio_color = "#8A8A8A"
+        self.readiness_report = None
+        self.readiness_checking = False
+        self.update_tag = ""
+        self.update_marker = log_dir.parent / "update-check.txt"
+        # 安装器在需要重启时留下这个文件：重启后第一次自检要把结果主动告诉用户。
+        self.first_run_marker = pathlib.Path(core.root_dir()) / "first-run.pending"
+        self.first_run = self.first_run_marker.exists()
 
         self.model = UiModel(self.settings, log_dir)
         self.model.apply_settings(self.settings)
@@ -101,9 +166,11 @@ class App(QObject):
         self.probe_timer = QTimer(self, interval=2000, timeout=self._probe)
         self.usbip_timer = QTimer(self, interval=5000, timeout=self._check_usbip)
         self.tick_timer = QTimer(self, interval=1000, timeout=self._tick)
+        self.readiness_timer = QTimer(self, interval=15000, timeout=self._run_readiness)
 
         bridge.status.connect(self._on_status)
         bridge.meter.connect(self.model.set_meter)
+        bridge.stats.connect(self._on_stats)
         bridge.running.connect(self._on_running)
         self.usbip_checked.connect(self._on_usbip)
         self.driver_done.connect(self._driver_done)
@@ -112,12 +179,18 @@ class App(QObject):
         self.native_done.connect(self._native_done)
         self.synapse_done.connect(self._synapse_done)
         self.grips_checked.connect(self._grips_checked)
+        self.readiness_checked.connect(self._on_readiness)
+        self.update_checked.connect(self._on_update)
         self.model.toggleRequested.connect(self._toggle)
         self.model.settingsEdited.connect(self.update_settings)
         self.model.testRequested.connect(self._test)
+        self.model.chainTestRequested.connect(self._chain_test)
         self.model.autostartRequested.connect(self._set_autostart)
         self.model.hideRequested.connect(self._set_hidden)
         self.model.synapseRequested.connect(self._start_synapse)
+        self.model.readinessRequested.connect(self._run_readiness)
+        self.model.fixRequested.connect(self.apply_fix)
+        self.model.openUpdateRequested.connect(self._open_update)
         self.model.openLogsRequested.connect(lambda: system.open_folder(str(log_dir)))
         self.model.exportLogsRequested.connect(self.export_logs)
         self.window.shown.connect(self._check_usbip)
@@ -133,8 +206,10 @@ class App(QObject):
         if self.settings.hide_physical:
             self._set_hidden(True)
         self._probe()
-        for timer in (self.probe_timer, self.usbip_timer, self.tick_timer):
+        for timer in (self.probe_timer, self.usbip_timer, self.tick_timer, self.readiness_timer):
             timer.start()
+        self._run_readiness()
+        threading.Thread(target=self._check_update, daemon=True).start()
         if show:
             self.show_window()
 
@@ -324,7 +399,9 @@ class App(QObject):
         self._refresh()
 
     def _on_running(self, running):
+        self.bridge_running = running
         if not running:
+            self.bridge_started_at = None
             if self.wanted and not self.closing:
                 self.events.status("lost")
                 self.restart_timer.start()
@@ -338,15 +415,160 @@ class App(QObject):
 
     def _on_status(self, message):
         self.status = message
+        if message.get("state") == "connected" and self.bridge_started_at is None:
+            # 标记虚拟手柄挂载时刻：比它更早启动的游戏拿不到触觉流，要提示重开。
+            self.bridge_started_at = time.time()
+        if message.get("state") == "lost":
+            self.bridge_started_at = None
         self.events.status(message.get("state"))
         self._refresh()
 
+    def _on_stats(self, message):
+        frames = int(message.get("audio_frames") or 0)
+        if frames > self.audio_frames:
+            self.audio_seen_at = time.monotonic()
+        self.audio_frames = frames
+        self._update_audio()
+        self._refresh()
+
+    def _audio_age(self):
+        return None if self.audio_seen_at is None else time.monotonic() - self.audio_seen_at
+
+    def _update_audio(self):
+        if not self.bridge_running:
+            text, color = "未启动", "#8A8A8A"
+        elif self.audio_frames <= 0:
+            text, color = "还没收到", "#E8B454"
+        else:
+            age = self._audio_age() or 0.0
+            text = f"已收到（最近 {age:.0f} 秒）" if age < 30 else "最近 30 秒没收到"
+            color = "#44D62C" if age < 30 else "#E8B454"
+        self.audio_color = color
+        self.model.set_audio_state(text, color)
+
+    def _run_readiness(self):
+        if self.readiness_checking or self.closing:
+            return
+        self.readiness_checking = True
+
+        def work():
+            try:
+                stale = ()
+                if self.bridge_started_at and self.mode == "pc":
+                    try:
+                        stale = tuple(core.stale_windowed_processes(self.bridge_started_at))
+                    except Exception:
+                        stale = ()
+                facts = readiness.gather_facts(
+                    root=core.root_dir(), settings=self.settings, mode=self.mode, instance=self.instance,
+                    bridge_running=self.bridge_running, bridge_state=self.status,
+                    audio_frames=self.audio_frames, audio_age=self._audio_age(), stale=stale)
+                data = readiness.build_report(facts).to_dict()
+            except Exception as error:
+                data = {"ready": False, "summary": "自检失败", "error": str(error), "checks": []}
+            self.readiness_checked.emit(data)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_readiness(self, data):
+        self.readiness_checking = False
+        if self.closing:
+            return
+        self.readiness_report = data
+        self.model.set_readiness(data)
+        if self.first_run:
+            self._first_run_result(data)
+
+    def _first_run_result(self, data):
+        """安装/重启后第一次跑完自检：把结论直接推给用户，别让他在检查项里自己找。"""
+        self.first_run = False
+        try:
+            self.first_run_marker.unlink()
+        except OSError:
+            pass
+        summary = data.get("summary", "")
+        if data.get("state") == "ready":
+            self.toast("info", "安装完成", "自检通过，进游戏就能用")
+        elif data.get("core_ready"):
+            self.toast("warning", "按键已可用，握把还差一步", summary)
+        else:
+            self.toast("warning", "还差几步才能用", f"{summary}；按状态页的按钮逐项处理")
+
+    def _check_update(self):
+        try:
+            tag = update.check(self.update_marker)
+        except Exception:
+            tag = ""
+        self.update_checked.emit(tag)
+
+    def _on_update(self, tag):
+        if not tag or self.closing:
+            return
+        self.update_tag = tag
+        self.model.set_update(tag.lstrip("vV"))
+
+    def _open_update(self):
+        if self.update_tag:
+            webbrowser.open(update.release_url(self.update_tag))
+
+    def _report_issue(self):
+        """带版本和自检结果打开新 issue：用户不用会写复现步骤，也不会漏带关键信息。"""
+        report = self.readiness_report or {}
+        lines = [f"版本：{__version__}", f"系统：{platform.platform()}",
+                 f"自检：{report.get('summary', '')}", ""]
+        for item in report.get("checks", []):
+            if item.get("state") in ("fail", "warn"):
+                lines.append(f"- {item.get('title', '')}：{item.get('detail', '')}")
+        query = urllib.parse.urlencode({"title": f"[自动] {report.get('summary', '问题反馈')}",
+                                        "body": "\n".join(lines)})
+        webbrowser.open(f"https://github.com/Winkless213/wolverine-ds5/issues/new?{query}")
+
+    def apply_fix(self, action):
+        """自检横幅上的修复动作；只做用户本来就能在界面上做的事。"""
+        if action == "recheck":
+            self._run_readiness()
+            return
+        if action == "start_synapse":
+            self._start_synapse()
+        elif action == "restart_bridge":
+            self.paused = False
+            if self.bridge.is_running:
+                self.bridge.stop()
+            else:
+                self._apply_mode()
+        elif action in ("enable_hide", "rehide"):
+            if action == "enable_hide":
+                self.update_settings({"hide_physical": True})
+            self.hide_failed = False
+            self._set_hidden(True)
+        elif action == "switch_pc":
+            self.switch_driver("pc")
+        elif action == "open_synapse":
+            webbrowser.open("https://www.razer.com/synapse-4")
+        elif action == "open_usbip":
+            webbrowser.open("https://github.com/vadimgrn/usbip-win2/releases")
+        elif action == "open_hidhide":
+            webbrowser.open("https://github.com/nefarius/HidHide/releases")
+        elif action == "report_issue":
+            self._report_issue()
+        elif action == "enable_grip":
+            self.update_settings({"grip_enabled": True})
+        elif action == "set_gain":
+            self.update_settings({"grip_gain": 1.0, "grip_gain_left": 1.0, "grip_gain_right": 1.0})
+        self._refresh()
+        # 隐藏、拉雷云、重启桥接都是异步的：立刻重查还是旧状态，等它们落地后再查一次。
+        self._run_readiness()
+        if action in ("start_synapse", "restart_bridge", "enable_hide", "rehide", "switch_pc"):
+            QTimer.singleShot(2500, self._run_readiness)
+
     def _refresh(self):
         running = self.bridge.is_running
+        self.bridge_running = running
         connected = running and self.status.get("state") == "connected"
         ready = self._grips_ready()
         status = dict(self.status, grips_ready=ready, synapse=self.grips_state,
-                      hide_released=bool(self.settings.hide_physical and not self.hiding_active))
+                      hide_released=bool(self.settings.hide_physical and not self.hiding_active),
+                      hide_failed=bool(self.settings.hide_physical and self.hide_failed))
         key, title, detail = core.describe(running, self.wanted, status, self.mode)
         if self.busy:
             key, title, detail = "waiting", "正在切换驱动", "请在弹出的窗口中允许管理员权限"
@@ -372,6 +594,22 @@ class App(QObject):
         else:
             self.model.set_sensa("未检测")
             self.model.set_grip_ready(True)
+        error_title, error_detail = readiness.grip_error_text(self.status.get("grip_error"))
+        self.model.set_grip_error(error_title, error_detail)
+        if not self.settings.hide_physical:
+            hide_text, hide_color = "关闭", "#8A8A8A"
+        elif self.hide_failed:
+            hide_text, hide_color = "失败", "#F06A6A"
+        elif self.hiding_active:
+            hide_text, hide_color = "开启", "#44D62C"
+        else:
+            hide_text, hide_color = "未生效", "#E8B454"
+        self.model.set_hide_state(hide_text, hide_color)
+        self._update_audio()
+        ds5_color = "#44D62C" if self.usbip_state else ("#E8B454" if running else "#8A8A8A")
+        sensa_color = ("#44D62C" if ready else
+                       "#F06A6A" if self.status.get("grip_error") else "#E8B454")
+        self.model.set_dots(ds5_color, sensa_color, self.audio_color, hide_color)
         # 雷云没在跑（或离线）才给「启动雷云」入口；程序不会自己去反复拉起。
         self.model.set_synapse_startable(
             bool(self.mode == "pc" and self.wanted and not self.synapse_checking
@@ -415,8 +653,10 @@ class App(QObject):
 
     def _on_usbip(self, attached):
         self.checking = False
+        self.usbip_state = attached
         self.model.set_ds5("已挂载" if attached else "未挂载",
                            "usbip · 127.0.0.1:3240" if attached else "桥接启动后自动挂载")
+        self._refresh()
 
     # ---- 设置与测试 ----
 
@@ -449,7 +689,8 @@ class App(QObject):
             return
         try:
             text = log_export.build_diagnostic(self.log_dir, __version__, self.mode,
-                                               dataclasses.asdict(self.settings), status=self.status)
+                                               dataclasses.asdict(self.settings), status=self.status,
+                                               readiness=self.readiness_report)
             pathlib.Path(path).write_text(text, encoding="utf-8")
         except OSError as error:
             self.toast("error", "日志导出失败", str(error))
@@ -459,6 +700,13 @@ class App(QObject):
     def _test(self, target):
         self.bridge.send(json.dumps({"type": "test", "target": target}))
         self.model.set_testing(target)
+
+    def _chain_test(self):
+        # 先关掉 LT/RT 测试，再让输出线程用真编码器跑合成 PCM（左 1.5s → 右 1.5s）。
+        self._test(None)
+        self.bridge.send(json.dumps({"type": "test", "target": "chain"}))
+        self.toast("success", "全链路测试",
+                   "先左握把、再右握把各 1.5 秒；只震一边或都没震，请到系统页导出日志")
 
     # ---- 对游戏隐藏实体手柄（HidHide） ----
 
@@ -510,7 +758,11 @@ class App(QObject):
         if self.quit_pending:
             self.quit()
             return
+        # 隐藏失败不能把原因吞掉：桥接按旧规则不启动（实体手柄还看得见，不能让游戏出现两只），
+        # 但状态标题和自检都会写明真实原因，并给「重新隐藏」的入口。
         self.toast("error", "HidHide 设置失败", f"{code}；请确认 HidHide 可用后重试")
+        self._refresh()
+        self._run_readiness()
 
     # ---- 驱动切换 ----
 
@@ -696,6 +948,82 @@ def log_crashes(directory):
     sys.excepthook = hook
 
 
+def diagnose():
+    """无界面诊断：安装器和故障机直接跑 `WolverineDS5.exe --diagnose`，不启动桥接。"""
+    import tempfile
+
+    report = readiness.diagnose(root=core.root_dir(), settings=settings.load())
+    paths = readiness.write_files(report, pathlib.Path(tempfile.gettempdir()))
+    print(report.text())
+    print(f"报告：{paths[1]}")
+    # 只看核心链路：没有雷云时按键照样能用，不该让环境诊断返回失败。
+    return 0 if report.core_ready else 3
+
+
+def uninstall_cleanup():
+    """卸载前收尾：放开实体手柄、卸掉虚拟手柄、删掉最高权限任务。
+
+    卸载器可能已经删掉部分文件，所以每一步失败都只记录，最后的退出码表示是否全部完成。
+    结果同时写进 %TEMP%\\WolverineDS5-uninstall-result.txt：窗口版 exe 没有控制台，卸载器只认这个文件。
+    """
+    import tempfile
+
+    done = True
+    lines = []
+    before = readiness.usbip_services()
+    try:
+        native.restore_native(settings.load().hidden_app)
+        lines.append("restore_native=ok")
+    except Exception as error:
+        lines.append(f"restore_native=failed {error}")
+        done = False
+    try:
+        if synapse.delete_task():
+            lines.append("delete_task=ok")
+        else:
+            lines.append("delete_task=failed")
+            done = False
+    except Exception as error:
+        lines.append(f"delete_task=failed {error}")
+        done = False
+    try:
+        core.set_autostart(False)
+        lines.append("autostart=removed")
+    except Exception as error:
+        lines.append(f"autostart=skipped {error}")
+    # 卸载只解除挂载和隐藏，绝不删 USBIP 驱动/服务：删了就可能在 USB 层留烂摊子。
+    after = readiness.usbip_services()
+    lines.append("usbip_services_before=" + ",".join(before))
+    lines.append("usbip_services_after=" + ",".join(after))
+    lines.append("usbip_untouched=" + ("ok" if before == after else "changed"))
+    if before != after:
+        done = False
+    lines.append("result=" + ("ok" if done else "failed"))
+    try:
+        (pathlib.Path(tempfile.gettempdir()) / "WolverineDS5-uninstall-result.txt").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return 0 if done else 1
+
+
+def request_quit(name, timeout_ms=30000):
+    """安装器、卸载器用：请正在运行的实例自己退出。
+
+    绝对不能直接结束进程：那会跳过"放开实体手柄、卸掉虚拟手柄"，
+    用户看到的是手柄时隐时现或者两只手柄并存，只能重启电脑。
+    """
+    socket = QLocalSocket()
+    socket.connectToServer(name)
+    if not socket.waitForConnected(500):
+        return 0  # 没在运行，正是想要的结果
+    socket.write(b"quit")
+    if not socket.waitForBytesWritten(1000):
+        return 1
+    # 服务端完成原生恢复、桥接退出后进程结束，这条连接随之断开。
+    return 0 if socket.waitForDisconnected(timeout_ms) else 1
+
+
 def main(argv=None):
     argv = sys.argv if argv is None else argv
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("WolverineDS5.App")
@@ -707,6 +1035,8 @@ def main(argv=None):
 
     # 单实例：已有实例时让它显示窗口（开机自启的 --tray 不打扰），自己退出。
     name = f"WolverineDS5-{getpass.getuser()}"
+    if "--quit" in argv:
+        return request_quit(name)
     socket = QLocalSocket()
     socket.connectToServer(name)
     if socket.waitForConnected(300):
@@ -722,8 +1052,12 @@ def main(argv=None):
 
     def activate():
         client = server.nextPendingConnection()
-        if client.waitForReadyRead(1000) and bytes(client.readAll()) == b"show":
-            app.show_window()
+        if client.waitForReadyRead(1000):
+            message = bytes(client.readAll())
+            if message == b"show":
+                app.show_window()
+            elif message == b"quit":
+                app.quit()
         client.disconnectFromServer()
 
     server.newConnection.connect(activate)
@@ -754,7 +1088,8 @@ def self_test():
         report.append(f"qml={qml_ok}")
         ok = ok and qml_ok
         window.close()
-        for name in ("wolverine-capture.exe", "SDL3.dll", "xbox-sensa-device.json", "sensa-device.json"):
+        for name in ("wolverine-capture.exe", "SDL3.dll", "xbox-sensa-device.json", "sensa-device.json",
+                     "psutil/_psutil_windows.pyd", "_socket.pyd"):
             present = (root / name).exists()
             ok = ok and present
             report.append(f"{name}={present}")
@@ -776,6 +1111,10 @@ def self_test():
 
 
 if __name__ == "__main__":
+    if "--diagnose" in sys.argv:
+        sys.exit(diagnose())
     if "--self-test" in sys.argv:
         sys.exit(self_test())
+    if "--uninstall" in sys.argv:
+        sys.exit(uninstall_cleanup())
     sys.exit(main())

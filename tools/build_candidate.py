@@ -6,14 +6,17 @@
 
 `--allow` 列出本次允许变化的源文件（相对仓库根）。其余字节码必须与基线包完全一致；
 已允许的模块必须与当前源码编译出的字节码一致；桥接与托盘两个 exe 的内容身份都记进
-`<out>/package-check.json`。任何一项不符就以非零码退出，且不写启用标记。
+`<out>/package-check.json`，包内全部分发文件的 sha256 记进 `<out>/package-hash.json`。
+任何一项不符就以非零码退出，且不写启用标记。
 """
 import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PyInstaller.archive.readers import CArchiveReader, PKG_ITEM_PYZ
@@ -29,6 +32,10 @@ DEFAULT_TESTS = ("test_sensa_multiband.py", "test_pc_bridge.py", "test_sensa_fra
 ASSET_FILES = ("sensa-device.json", "WolverineDS5.spec", "wolverine-capture.exe", "SDL3.dll",
                "ui/StatusPage.qml")
 VENDOR_HINTS = ("HAR.dll", "Interhaptics", "RazerProvider")
+MANIFEST_NAME = "package-hash.json"
+# 发布清单只收分发文件：清单自身、内容身份核对结果、字节码缓存与日志都不参与。
+MANIFEST_SKIP_FILES = (MANIFEST_NAME, "package-check.json")
+MANIFEST_SKIP_SUFFIXES = (".pyc", ".log")
 
 
 def digest(path):
@@ -127,6 +134,54 @@ def report(package, baseline, source, allow, assets, marker, allowed_assets=()):
     return result
 
 
+def candidate_version(source, output):
+    """版本取候选目录名（candidate-1.1.45）；目录名不带版本时回落到源码 app/__init__.py。"""
+    if output.name.startswith("candidate-"):
+        return output.name[len("candidate-"):]
+    init = source / "app" / "__init__.py"
+    found = re.search(r'__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"))
+    return found.group(1) if found else "unknown"
+
+
+def write_manifest(root, version):
+    """生成发布包哈希清单；键是相对运行时根目录（onedir 的 _internal）的路径。
+
+    运行时的 check_integrity 用 core.root_dir()（打包后即 _MEIPASS）拼路径，
+    所以清单必须放在 _internal 里、键也相对它，否则自检读不到。
+    """
+    files, total = {}, 0
+    for path in root.rglob("*"):
+        if not path.is_file() or path.name in MANIFEST_SKIP_FILES:
+            continue
+        if path.suffix in MANIFEST_SKIP_SUFFIXES or "__pycache__" in path.parts:
+            continue
+        files[path.relative_to(root).as_posix()] = digest(path)
+        total += path.stat().st_size
+    files = dict(sorted(files.items()))
+    canonical = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    data = {"version": version,
+            "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "files": files,
+            "count": len(files),
+            "total_bytes": total,
+            "manifest_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+    (root / MANIFEST_NAME).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                                      encoding="utf-8")
+    return data
+
+
+def verify_manifest(root, data):
+    """回读清单，确认落盘内容可解析且 manifest_sha256 与 files 一致。"""
+    try:
+        written = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    files = written.get("files", {})
+    canonical = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return (written.get("version") == data["version"] and written.get("count") == len(files)
+            and written.get("manifest_sha256") == hashlib.sha256(canonical.encode("utf-8")).hexdigest())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=str(Path(__file__).resolve().parents[1]))
@@ -166,6 +221,11 @@ def main():
         assets = frozen_assets(source)
     result = report(output / "WolverineDS5", baseline / "WolverineDS5", source, allow, assets, args.marker,
                     args.allow_asset)
+    app_root = output / "WolverineDS5" / "_internal"
+    manifest = write_manifest(app_root, candidate_version(source, output))
+    result["manifest"] = verify_manifest(app_root, manifest)
+    if not result["manifest"]:
+        print(f"{app_root / MANIFEST_NAME} 回读校验失败，发布清单不可信", file=sys.stderr)
     (output / "package-check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in result.items() if key != "source_sha256"}, indent=2))
     raise SystemExit(0 if result["passed"] else 1)

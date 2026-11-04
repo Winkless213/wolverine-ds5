@@ -128,11 +128,16 @@ def tuned_profile(name):
     return profile
 
 
+def encoder_path():
+    """雷云安装的 PCM 编码器路径；自检和身份校验都用它，避免路径两处漂移。"""
+    return (Path(os.environ["LOCALAPPDATA"]) / "Razer/RazerAppEngine/User Data/Apps/Common/"
+            "RzInterhapticsHapticEncoder_v2.0.1.11.dll")
+
+
 class PcmEncoder:
     def __init__(self, profile="legacy"):
         self.profile = profile
-        path = (Path(os.environ["LOCALAPPDATA"]) / "Razer/RazerAppEngine/User Data/Apps/Common/"
-                "RzInterhapticsHapticEncoder_v2.0.1.11.dll")
+        path = encoder_path()
         if hashlib.sha256(path.read_bytes()).hexdigest() != ENCODER_SHA256:
             raise RuntimeError("雷蛇编码器版本不匹配；多频候选未启动")
         self.dll = c.WinDLL(str(path))

@@ -35,7 +35,8 @@ class Settings:
     follow_ratio: float = 0.5
     audio_guard: bool = True
     # 保存运行时隐藏的偏好；托盘退出会撤销系统隐藏，下次启动再自动申请。
-    hide_physical: bool = False
+    # 默认开启：不隐藏时游戏会同时看到实体手柄和虚拟 DualSense，新手装上就会觉得“手柄乱了”。
+    hide_physical: bool = True
     # 隐藏时已登记的 USB 端口实例；HidHide 按实例隐藏，换到新 USB 口的手柄不在其中，需要重新隐藏。
     hidden_devices: tuple = ()
     # 隐藏时放行的桥接程序；换成打包版或挪了目录后，新桥接不在 HidHide 放行名单里，也读不到手柄。

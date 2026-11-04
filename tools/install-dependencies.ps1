@@ -42,6 +42,20 @@ function Test-Usbip {
     return [bool](Get-Service -Name 'usbip2_ude' -ErrorAction SilentlyContinue)
 }
 
+# 官方安装包会同时注册 usbip2_ude（虚拟主机控制器）和 usbip2_filter（设备过滤驱动）。
+# 只装一半时本程序照样能用，但飞智 X-Haptics 这类工具会判「USBIP 驱动不符合要求」，
+# 所以这里按完整安装验收，缺哪个就重跑官方安装器修。
+function Test-UsbipComplete {
+    if (-not (Test-Usbip)) { return $false }
+    foreach ($name in 'usbip2_ude', 'usbip2_filter') {
+        if (-not (Get-Service -Name $name -ErrorAction SilentlyContinue)) {
+            Write-Log "USBip service missing: $name"
+            return $false
+        }
+    }
+    return $true
+}
+
 # 版本号取自 usbip.exe（上游安装包的版本号也取自它）；读不到时不拦，按已安装处理。
 function Test-UsbipOutdated {
     $exe = Join-Path $programFiles 'USBip\usbip.exe'
@@ -83,8 +97,9 @@ function Invoke-DownloadInstall {
 }
 
 function Install-Dependency {
-    param($Spec, [string]$Name, [scriptblock]$Check, [scriptblock]$Outdated = { $false })
-    $state = if (-not (& $Check)) { 'missing' } elseif (& $Outdated) { 'outdated' } else { 'present' }
+    param($Spec, [string]$Name, [scriptblock]$Check, [scriptblock]$Outdated = { $false }, [scriptblock]$Complete = $null)
+    $done = { (& $Check) -and -not (& $Outdated) -and (-not $Complete -or (& $Complete)) }
+    $state = if (-not (& $Check)) { 'missing' } elseif (& $Outdated) { 'outdated' } elseif (-not (& $done)) { 'incomplete' } else { 'present' }
     if ($state -eq 'present') {
         Write-Log "$Name already present"
         return 'present'
@@ -100,11 +115,12 @@ function Install-Dependency {
         Write-Log "$Name install error: $_"
     }
     Start-Sleep -Seconds 3
-    if ((& $Check) -and -not (& $Outdated)) {
+    if (& $done) {
         Write-Log "$Name installed"
         return 'installed'
     }
     Write-Log "$Name still $state after install"
+    if ($state -eq 'incomplete') { return 'incomplete' }
     return 'failed'
 }
 
@@ -126,7 +142,7 @@ if (-not $CheckOnly -and $AutoInstall) {
     }
 }
 
-$lines.Add('usbip=' + (Install-Dependency -Spec $Usbip -Name 'USBip-win2' -Check ${function:Test-Usbip} -Outdated ${function:Test-UsbipOutdated}))
+$lines.Add('usbip=' + (Install-Dependency -Spec $Usbip -Name 'USBip-win2' -Check ${function:Test-Usbip} -Outdated ${function:Test-UsbipOutdated} -Complete ${function:Test-UsbipComplete}))
 $lines.Add('hidhide=' + (Install-Dependency -Spec $HidHide -Name 'HidHide' -Check ${function:Test-HidHide}))
 
 $lines.Add('synapse=' + (Get-SynapseResult))
@@ -134,6 +150,6 @@ $lines.Add('synapse=' + (Get-SynapseResult))
 $lines -join "`r`n" | Out-File -LiteralPath $ResultPath -Encoding ASCII
 Write-Log ('result: ' + ($lines -join ', '))
 
-$failed = $lines | Where-Object { $_ -match '=(failed|missing|outdated)$' }
+$failed = $lines | Where-Object { $_ -match '=(failed|missing|outdated|incomplete)$' }
 if ($failed) { exit 2 }
 exit 0

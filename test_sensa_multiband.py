@@ -744,3 +744,43 @@ def test_frame_trace_records_the_encoder_frame_not_a_copy_of_the_sent_one(tmp_pa
     assert row["raw"] == DUAL.hex()
     assert row["changed"] is True
     assert totals(bytes.fromhex(row["sent"])) == [0, 26]
+
+def test_chain_test_encodes_a_left_then_right_tone_through_the_shipping_encoder():
+    import numpy as np
+    output, encoder, mixer = backend()
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(MixState(chain=1), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        chunks = [call.args[0] for call in encoder.encode.call_args_list]
+        assert len(chunks) == 330
+        left = np.frombuffer(chunks[0], dtype="<i2").reshape(-1, 2)
+        assert abs(int(left[:, 0].max())) > 1000 and not left[:, 1].any()
+        right = np.frombuffer(chunks[200], dtype="<i2").reshape(-1, 2)
+        assert abs(int(right[:, 1].max())) > 1000 and not right[:, 0].any()
+        assert mixer.play.call_count == 1
+    finally:
+        output.close()
+
+
+def test_chain_test_sends_one_frame_per_10ms_and_only_regenerates_on_a_new_token():
+    output, encoder, mixer = backend()
+    mailbox = PcmMailbox()
+    try:
+        mailbox.configure(MixState(chain=1), now=1)
+        output.render_pcm(mailbox.take(now=1), now=1)
+        assert mixer.play.call_count == 1
+        for step in range(1, 5):
+            now = 1 + step * .01
+            mailbox.configure(MixState(chain=1), now=now)
+            output.render_pcm(mailbox.take(now=now), now=now)
+        assert mixer.play.call_count == 5
+        assert encoder.encode.call_count == 330
+        mailbox.configure(MixState(chain=1), now=1.2)
+        output.render_pcm(mailbox.take(now=1.2), now=1.2)
+        assert encoder.encode.call_count == 330
+        mailbox.configure(MixState(chain=2), now=1.3)
+        output.render_pcm(mailbox.take(now=1.3), now=1.3)
+        assert encoder.encode.call_count == 660
+    finally:
+        output.close()

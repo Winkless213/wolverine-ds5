@@ -71,6 +71,50 @@ Item {
                         onClicked: appModel.toggleBridge()
                     }
                 }
+
+                // 未就绪时把第一条失败和修复入口放在首屏；就绪后整段隐藏，不占地方。
+                Text {
+                    width: parent.width
+                    visible: !appModel.readinessReady
+                    text: appModel.readinessSummary
+                    color: appModel.readinessColor
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                    lineHeight: 1.3
+                }
+                Text {
+                    width: parent.width
+                    visible: !appModel.readinessReady && appModel.readinessDetail !== ""
+                    text: appModel.readinessDetail
+                    color: "#9C9C9C"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    lineHeight: 1.3
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                }
+                Rectangle {
+                    width: 104
+                    height: 24
+                    radius: 4
+                    color: "#1D1D1D"
+                    border.color: Theme.warn
+                    border.width: 1
+                    visible: !appModel.readinessReady && appModel.readinessFixText !== ""
+                    Text {
+                        anchors.centerIn: parent
+                        text: appModel.readinessFixText
+                        color: Theme.warn
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: appModel.requestFix()
+                    }
+                }
             }
         }
 
@@ -92,7 +136,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 8
-                    Rectangle { width: 6; height: 6; radius: 3; color: Theme.green; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 6; height: 6; radius: 3; color: appModel.ds5Color; anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         text: "虚拟 DualSense"
                         color: "#D0D0D0"
@@ -113,7 +157,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 8
-                    Rectangle { width: 6; height: 6; radius: 3; color: Theme.green; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 6; height: 6; radius: 3; color: appModel.sensaColor; anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         text: "雷蛇 Sensa"
                         color: "#D0D0D0"
@@ -159,16 +203,16 @@ Item {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 8
-                    Rectangle { width: 6; height: 6; radius: 3; color: Theme.green; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 6; height: 6; radius: 3; color: appModel.gameColor; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "音频保护"
+                        text: "游戏触觉"
                         color: "#D0D0D0"
                         font.pixelSize: 15
                         font.weight: Font.DemiBold
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: appModel.audioGuard ? "开启" : "关闭"
+                        text: appModel.audioState
                         color: "#E8E8E8"
                         font.pixelSize: 15
                         font.weight: Font.DemiBold
@@ -180,7 +224,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 8
-                    Rectangle { width: 6; height: 6; radius: 3; color: Theme.green; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 6; height: 6; radius: 3; color: appModel.hideColor; anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         text: "HidHide"
                         color: "#D0D0D0"
@@ -189,7 +233,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: appModel.hidePhysical ? "开启" : "关闭"
+                        text: appModel.hideStateText
                         color: "#E8E8E8"
                         font.pixelSize: 15
                         font.weight: Font.DemiBold
@@ -318,31 +362,59 @@ Item {
                         divider: false
                         enabled: appModel.gripEnabled
                         opacity: appModel.gripEnabled ? 1 : 0.45
-                        Rectangle {
-                            width: 168
-                            height: 30
-                            radius: 4
-                            color: appModel.testing === "grip" ? Theme.green : "#1D1D1D"
-                            border.color: appModel.gripReady ? Theme.green : "#5A5A5A"
-                            border.width: 1
-                            opacity: (appModel.testable && appModel.gripEnabled && appModel.gripReady) ? 1 : 0.45
+                        Row {
+                            spacing: 8
+                            Rectangle {
+                                width: 168
+                                height: 30
+                                radius: 4
+                                color: appModel.testing === "grip" ? Theme.green : "#1D1D1D"
+                                border.color: appModel.gripReady ? Theme.green : "#5A5A5A"
+                                border.width: 1
+                                opacity: (appModel.testable && appModel.gripEnabled && appModel.gripReady) ? 1 : 0.45
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: !appModel.gripReady ? "等待雷云…"
-                                      : (appModel.testing === "grip" ? "结束测试" : "按住 LT / RT 测试")
-                                color: !appModel.gripReady ? "#9A9A9A"
-                                       : (appModel.testing === "grip" ? "#0A0A0A" : Theme.green)
-                                font.pixelSize: 13
-                                font.weight: Font.DemiBold
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: !appModel.gripReady ? "等待雷云…"
+                                          : (appModel.testing === "grip" ? "结束测试" : "按住 LT / RT 测试")
+                                    color: !appModel.gripReady ? "#9A9A9A"
+                                           : (appModel.testing === "grip" ? "#0A0A0A" : Theme.green)
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                }
+
+                                MouseArea {
+                                    id: testMouse
+                                    anchors.fill: parent
+                                    enabled: appModel.testable && appModel.gripEnabled && appModel.gripReady
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: appModel.requestTest()
+                                }
                             }
 
-                            MouseArea {
-                                id: testMouse
-                                anchors.fill: parent
-                                enabled: appModel.testable && appModel.gripEnabled && appModel.gripReady
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: appModel.requestTest()
+                            Rectangle {
+                                width: 128
+                                height: 30
+                                radius: 4
+                                color: "#1D1D1D"
+                                border.color: appModel.gripReady ? Theme.warn : "#5A5A5A"
+                                border.width: 1
+                                opacity: (appModel.testable && appModel.gripEnabled && appModel.gripReady) ? 1 : 0.45
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "全链路测试"
+                                    color: appModel.gripReady ? Theme.warn : "#9A9A9A"
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: appModel.testable && appModel.gripEnabled && appModel.gripReady
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: appModel.requestChainTest()
+                                }
                             }
                         }
                     }
@@ -354,7 +426,7 @@ Item {
                 Layout.minimumWidth: 330
                 Layout.maximumWidth: 440
                 Layout.fillHeight: true
-                title: "实时输出"
+                title: "实时输出（估算）"
 
                 Item {
                     anchors.fill: parent
@@ -389,17 +461,31 @@ Item {
                 width: 5
                 height: 5
                 radius: 2.5
-                color: Theme.green
+                color: appModel.readinessColor
                 Layout.alignment: Qt.AlignVCenter
             }
             Text {
-                text: "SYSTEM READY"
-                color: "#A8A8A8"
+                text: appModel.readinessSummary
+                color: appModel.readinessColor
                 font.pixelSize: 12
                 font.letterSpacing: 1.4
                 Layout.alignment: Qt.AlignVCenter
             }
             Item { Layout.fillWidth: true }
+            // 有新版本时在版本号左边挂一条，点了去发布页；不自动更新。
+            Text {
+                visible: appModel.updateAvailable
+                text: "发现新版 " + appModel.updateVersion
+                color: Theme.green
+                font.pixelSize: 12
+                font.letterSpacing: 1.2
+                Layout.alignment: Qt.AlignVCenter
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: appModel.openUpdate()
+                }
+            }
             Text {
                 text: "Wolverine to DS5 · " + appModel.version + " · " + appModel.modeLabel
                 color: "#A8A8A8"

@@ -186,7 +186,7 @@ class ProcessCommandTests(unittest.TestCase):
         capture = Mock()
         capture.stdout.readline.return_value = '{"type": "ready", "address": "127.0.0.1:3240", "busid": "1-1"}\n'
         with patch.object(gip_bridge, "threading") as threading, \
-                patch.object(gip_bridge, "attach_virtual_ds5"), patch.object(gip_bridge.audio_guard, "start"), \
+                patch.object(gip_bridge, "attach_virtual_ds5", return_value=""), patch.object(gip_bridge.audio_guard, "start"), \
                 patch.object(gip_bridge.settings, "load", return_value=Settings()), \
                 patch.object(gip_bridge, "reconnect_loop", return_value=1):
             gip_bridge.serve(capture)
@@ -255,6 +255,23 @@ class AttachTests(unittest.TestCase):
         run = Mock(return_value=Mock(stdout=ATTACHED, returncode=0))
         attach_virtual_ds5("127.0.0.1:3240", "1-1", run=run)
         self.assertEqual(run.call_count, 1)
+
+    def test_a_failed_attach_is_reported_instead_of_only_printed(self):
+        run = Mock(return_value=Mock(stdout="", stderr="usbip: error: cannot attach", returncode=1))
+        message = attach_virtual_ds5("127.0.0.1:3240", "1-1", run=run)
+        self.assertIn("usbip attach 失败", message)
+        self.assertIn("cannot attach", message)
+
+
+class ChainCommandTests(unittest.TestCase):
+    def test_chain_test_bumps_the_request_counter_instead_of_arming_lt_rt(self):
+        haptics = Mock(test_target=None)
+        haptics.chain_request = 0
+        handle_command(haptics, {"type": "test", "target": "chain"})
+        self.assertEqual(haptics.chain_request, 1)
+        self.assertIsNone(haptics.test_target)
+        handle_command(haptics, {"type": "test", "target": "chain"})
+        self.assertEqual(haptics.chain_request, 2)
 
 
 class SuperviseTests(unittest.TestCase):

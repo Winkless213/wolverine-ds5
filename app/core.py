@@ -50,7 +50,7 @@ def parse_line(line):
             message = json.loads(text)
         except ValueError:
             message = None
-        if isinstance(message, dict) and message.get("type") in ("status", "meter"):
+        if isinstance(message, dict) and message.get("type") in ("status", "meter", "stats"):
             return message
     return {"type": "log", "text": text}
 
@@ -148,6 +148,8 @@ def describe(running, wanted, status, mode):
                   else "已手动停止，可在托盘菜单启动")
         return "stopped", "桥接已停止", detail
     if not running:
+        if status.get("hide_failed"):
+            return "error", "实体手柄未隐藏，桥接未启动", "HidHide 没有生效；点「重新隐藏」或把「对游戏隐藏实体手柄」关闭再打开"
         return "error", "桥接异常退出", "正在自动重启，详情见日志"
     state = status.get("state")
     if state == "connected" and status.get("backend") == "sensa":

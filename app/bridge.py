@@ -9,6 +9,7 @@ from app import core
 class Bridge(QObject):
     status = Signal(dict)
     meter = Signal(dict)
+    stats = Signal(dict)
     running = Signal(bool)
     log = Signal(str)
 
@@ -74,6 +75,9 @@ class Bridge(QObject):
         self._write(line.rstrip("\r\n"))
         if message["type"] == "status":
             self.status.emit(message)
+        elif message["type"] == "stats":
+            # 5 秒统计行本来只进日志；audio_frames 是判断“游戏有没有发触觉”的唯一现场证据。
+            self.stats.emit(message)
         else:
             self.log.emit(message["text"])
 

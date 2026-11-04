@@ -143,24 +143,41 @@ def detach_virtual():
 
 
 def restore_native(previous_app=""):
-    detach_virtual()
+    """恢复系统原状：卸掉虚拟手柄、放开实体手柄、还原 Xbox 驱动。
+
+    三步都要尝试：卸载 ubsip 端失败（比如 usbip.exe 被安全软件删了）不能连带跳过“解除隐藏”，
+    否则用户卸载后实体手柄仍然看不见。所有失败合并成一条错误抛出，交给调用方记录。
+    """
+    errors = []
+    try:
+        detach_virtual()
+    except Exception as error:
+        errors.append(f"虚拟手柄未能卸下（{error}）")
     try:
         configure_hiding(False, core.bridge_command(pc=True)[0], previous_app)
     except FileNotFoundError:
         if previous_app:
-            raise RuntimeError("HidHide CLI 缺失，无法解除实体手柄隐藏")
+            errors.append("HidHide CLI 缺失，无法解除实体手柄隐藏")
+    except Exception as error:
+        errors.append(f"解除实体手柄隐藏失败（{error}）")
     instances = [instance for instance in core.usb_instances(present=False)
                  if instance.upper().startswith(r"USB\VID_1532&PID_0A3F" + "\\")
                  and core.device_service(instance).lower() == "winusb"
                  and not core.xbox_restore_pending(instance)]
-    if not instances:
-        return
-    script = "".join(core.restore_xbox_script(instance) for instance in instances)
-    if core.run_elevated(script) != 0:
-        raise RuntimeError("Xbox 原厂驱动未恢复；如出现管理员提示，请允许后重试退出")
-    for _ in range(30):
-        if all(core.device_service(instance).lower() not in ("", "winusb")
-               or core.xbox_restore_pending(instance) for instance in instances):
-            return
-        time.sleep(.1)
-    raise RuntimeError("Xbox 驱动仍未恢复，程序保留以便重试")
+    if instances:
+        script = "".join(core.restore_xbox_script(instance) for instance in instances)
+        try:
+            if core.run_elevated(script) != 0:
+                errors.append("Xbox 原厂驱动未恢复；如出现管理员提示，请允许后重试退出")
+            else:
+                for _ in range(30):
+                    if all(core.device_service(item).lower() not in ("", "winusb")
+                           or core.xbox_restore_pending(item) for item in instances):
+                        break
+                    time.sleep(.1)
+                else:
+                    errors.append("Xbox 驱动仍未恢复，程序保留以便重试")
+        except Exception as error:
+            errors.append(f"Xbox 驱动恢复出错（{error}）")
+    if errors:
+        raise RuntimeError("；".join(errors))
