@@ -15,3 +15,6 @@ SDL3.dll
 HANDOFF.md
 *.bak
 work/
+
+# UI 验收截图与取证产物
+output/
