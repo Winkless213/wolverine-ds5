@@ -1,31 +1,45 @@
-# Wolverine DS5
+# Wolverine to DS5
 
-把雷蛇 Wolverine V3 Pro 手柄呈现为虚拟 PS5 DualSense，让只支持 DualSense 触觉的 PC 游戏把震动送到这只手柄。Windows 托盘程序，个人项目。
+**让雷蛇幻影战狼 V3 Pro 在 PC 游戏里变成一台 PS5 DualSense。**
+
+Windows 只把幻影战狼认成 Xbox 手柄，游戏因此拿不到 PS 手柄那一套原生适配。这个程序在本机用 USB/IP 挂出一台虚拟 DualSense，把实体手柄的按键、摇杆和触摸板映射过去；游戏发给 DualSense 的四声道触觉音频，在这里解码成握把参数，交给雷蛇 Sensa 驱动左右握把。
+
+你手里是幻影战狼，游戏里是一台 DualSense，震动跟着游戏走。
+
+## 现在能做什么
+
+- 游戏看到的是一台真正的 DualSense：设备描述符、VID/PID、触觉格式都对，不是把 Xbox 输入换个名字。
+- 左右握把独立震动，强度、触觉风格、打击加重可调，界面上能当场试。
+- USB 线与 2.4G 接收器可以在运行中切换，虚拟手柄不消失，游戏通常不用重开。
+- 实体手柄默认对游戏隐藏，避免一局出现两只手柄；正常退出时自动还原。
+- 常驻托盘、可选开机自启；自检把「按键链路」和「握把链路」分开报，缺什么点什么按钮修。
+- 依赖按官方源安装并校验完整性；卸载只解除挂载和隐藏，**不会删除 USBIP / HidHide 驱动**。
 
 ## 工作原理
 
 1. Go 接收程序 `wolverine-capture`（基于 [VIIPER](https://github.com/Winkless213/VIIPER/tree/wolverine-capture) 修改，GPL-3.0）在本机回环上通过 USB/IP 挂一只虚拟 DualSense；游戏把触觉作为四声道 USB 音频的后两路发给它。
 2. 接收程序把触觉 PCM 和主机输出报告以 JSON Lines 写到 stdout；Python 桥接从 stdin 把实体手柄的输入回送，250ms 没有输入即回中。
 3. Python 桥接把 PCM 转成手柄能播的参数：两种模式都取 10ms 峰值包络 ×1.2、再取 0.75 次方作强度。PC 模式经雷蛇 Sensa 驱动左右握把（该模式只有这两个执行器）；Xbox 模式默认走手柄的私有 Sensa 帧，同帧驱动四个马达（握把 216/116、扳机 249/149，均带频率）：有游戏 PCM 时握把由双频带分析驱动（5–80Hz 主频 + 84–400Hz 纹理，独立幅度/频率），没有 PCM 或本机缺少可用的雷蛇 HAR.dll 时分别回退到包络单频 / XUSB 四路强度。
-4. PySide6 托盘程序负责启停、强度调节、按手柄模式选择桥接、驱动切换和用 HidHide 对游戏隐藏实体手柄。
+4. PySide6 托盘程序负责启停、强度调节、按手柄模式选择桥接、驱动切换，以及用 HidHide 对游戏隐藏实体手柄。
 
-## 功能
+## 界面
 
-托盘程序分「状态」「震动」「设备与系统」三页：
+托盘程序两页：
 
-- 状态：桥接启停、虚拟 DS5 挂载状态、马达电平。
-- 震动：握把与扳机的强度和开关，按住 LT／RT 测试对应马达；PC 模式下扳机项不可用。
-- 设备与系统：驱动模式切换（桥接模式／Xbox 模式）、开机自启、默认音频自动切回、隐藏实体手柄、日志。
+- **状态**：连接状态、虚拟 DualSense 挂载、雷蛇 Sensa 与游戏触觉、握把强度与触觉风格、震动测试、实时电平，以及自检摘要和修复入口。
+- **系统**：开机自启、默认音频切回、对游戏隐藏实体手柄、日志目录与导出、完整自检列表。
 
 ## 环境要求与安装
 
-- Windows 10/11。
-- 已安装 [USBip-win2](https://github.com/vadimgrn/usbip-win2)、[HidHide](https://github.com/nefarius/HidHide) 和雷蛇 Synapse。安装器会检测这三项：USBip 和 HidHide 缺失时可在安装向导里选择自动安装（需要管理员权限与联网，固定安装官方 USBip 0.9.8.0 与 HidHide 1.5.230，装好后需重启一次）；雷云需要登录账号，安装器只打开下载页。已装的 USBip 低于 0.9.8.0 时，安装器同样提示并可自动升级：官方说明 0.9.7.8 可能内存损坏导致蓝屏。
+- Windows 10/11 64 位。
+- 已安装 [USBip-win2](https://github.com/vadimgrn/usbip-win2)、[HidHide](https://github.com/nefarius/HidHide) 和雷蛇 Synapse。安装器会检测这三项：USBip 和 HidHide 缺失、版本过旧或驱动不完整时，可在安装向导里选择自动安装（需要管理员权限与联网，固定安装官方 USBip 0.9.8.0 与 HidHide 1.5.230，装好后需重启一次）；雷云需要登录账号，安装器只打开下载页。USBip 必须两个服务都在（`usbip2_ude` 与 `usbip2_filter`），少了 `usbip2_filter` 飞智 X-Haptics 一类工具会报驱动不符合要求，安装器会重跑官方安装器补全。
 - PC 模式从 Synapse 安装目录加载 HAR 与 Provider，本仓库不包含也不分发雷蛇文件。
 
 ### 安装包
 
-从 [Releases](../../releases/latest) 下载 `Wolverine-DS5-Setup-1.0.4.exe` 安装，装完即可使用。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要安装 Python。安装器会创建开始菜单和桌面快捷方式，装完自动跑一次隐藏自检并检查外部依赖；USBip 或 HidHide 缺失、USBip 版本过旧时可一键自动安装并复检；当时跳过的话，重新运行安装包会再次检测。覆盖安装前请先退出雷云：要替换的文件可能被 Razer App Engine 占用，安装程序会因此中止（退出码 5），退出雷云后重装即可。
+从 [Releases](https://github.com/Winkless213/wolverine-ds5/releases/latest) 下载最新的 `Wolverine-DS5-Setup-<版本>.exe`。安装包自带托盘程序、Go 接收程序 `wolverine-capture.exe` 和 `SDL3.dll`，不需要装 Python；会创建开始菜单和桌面快捷方式，装完跑一次隐藏自检，然后检查外部依赖。补装过 USBip 或 HidHide 的，完成页会要求重启，重启后程序自动打开并汇报第一次自检结果。覆盖安装时安装器会先请旧实例自己退出，雷云不用关。
+
+装好后进游戏前先看一眼状态页：自检会把「按键链路」和「握把链路」分开报，`系统就绪` 就是可以玩了；只有握把链路有问题时显示的是「按键可用，握把未就绪」，按键不受影响。
 
 ### 从源码运行
 
@@ -77,6 +91,13 @@ PC 模式启动时检查雷云，未运行时通过安装器创建的开始菜�
 
 测试：`python -m pytest -q`（`test_api_check.py` 需要已编译的 `wolverine-capture.exe`）。`tools/build_candidate.py` 用于旁路打包并核对包内容身份，不启动托盘、桥接或游戏。
 
+## 当前状态
+
+- 最新版本 1.1.47。安装包与 exe **未签名**，SmartScreen 会提示「未知发布者」，运行前请核对 Releases 里的 SHA256。
+- 本机实测覆盖：PC 模式全链路、有线与 2.4G 切换、覆盖升级、卸载与驱动层还原；**没有任何依赖的干净机器尚未做完整回归**。
+- 与飞智 X-Haptics 共用同一个官方 USBIP 0.9.8.0，驱动不冲突，但两个程序不要同时运行。
+- 状态页对 1.1.46 及更早版本会提示「发现新版」，只提示、不自动更新。
+
 ## 许可与声明
 
 本项目以 GNU GPL-3.0 发布，见 [LICENSE](LICENSE)。接收程序基于 VIIPER 修改，沿用上游 GPL-3.0；SDL3 使用 zlib 许可，上游许可证文本见 [reference-licenses/](reference-licenses/)。
@@ -85,4 +106,6 @@ PC 模式启动时检查雷云，未运行时通过安装器创建的开始菜�
 
 ## 文档
 
-开发过程与硬件实测记录见 [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)。
+- 面向使用者的说明（安装、启动顺序、握把调节、常见问题、卸载）：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+- 开发过程与硬件实测记录：[docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)
+- 每个版本改了什么：[docs/RELEASES.md](docs/RELEASES.md)
