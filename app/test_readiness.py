@@ -49,6 +49,28 @@ def test_a_complete_machine_is_ready_and_says_so(tmp_path):
     assert states(report)["game"] == OK
 
 
+def test_usb2_or_hub_link_warns_but_keeps_the_pad_usable(tmp_path):
+    report = build_report(facts(tmp_path, usb_link={
+        "controller": "AMD USB 2.0 可扩展主机控制器",
+        "root_hub": "USB 根集线器(USB 3.0)",
+        "hubs": ("通用 USB 集线器",),
+        "path": "USB\\VID_1532&PID_0A4C\\PORT1 → USB\\VID_05E3&PID_0610\\HUB → PCI\\VEN_1022"}))
+    check = by_id(report, "usb_link")
+    assert check.state == WARN
+    assert "通用 USB 集线器" in check.detail
+    assert "USB 3.0" in check.detail
+    assert report.ready
+
+
+def test_usb3_direct_link_is_ok(tmp_path):
+    report = build_report(facts(tmp_path, usb_link={
+        "controller": "AMD USB 3.10 可扩展主机控制器",
+        "root_hub": "USB 根集线器(USB 3.0)",
+        "hubs": (),
+        "path": "USB\\VID_1532&PID_0A4C\\PORT1 → USB\\ROOT_HUB30\\ROOT → PCI\\VEN_1022"}))
+    assert by_id(report, "usb_link").state == OK
+
+
 def test_no_controller_blocks_and_offers_a_recheck(tmp_path):
     report = build_report(facts(tmp_path, mode="absent", instance=None))
     check = by_id(report, "device")

@@ -182,6 +182,8 @@ class Facts:
     audio_frames: int = 0
     audio_age: float | None = None
     environment_only: bool = False
+    # 手柄/接收器所在的 PnP 父链：控制器、中间 hub 与完整路径。
+    usb_link: dict = field(default_factory=dict)
 
 
 def check_integrity(facts):
@@ -226,6 +228,27 @@ def check_device(facts):
         return Check("device", "手柄在 Xbox 模式", FAIL,
                      "握把震动只支持 PC 模式；切到 PC 模式需要一次管理员权限和拔插一次", fix="switch_pc")
     return Check("device", "手柄已连接", OK, facts.instance or "")
+
+
+def check_usb_link(facts):
+    """手柄挂在 USB 2.0 或经过 hub 时提醒：链路会拖慢输入并挤掉震动细节。"""
+    link = facts.usb_link or {}
+    if facts.mode != "pc" or not link:
+        return Check("usb_link", "USB 链路", SKIP, "当前连接方式不读 USB 链路")
+    controller = link.get("controller") or ""
+    hubs = tuple(link.get("hubs") or ())
+    path = link.get("path") or ""
+    slow = "USB 2.0" in controller or "USB2" in controller.upper()
+    if slow or hubs:
+        parts = []
+        if hubs:
+            parts.append("经过 " + "、".join(hubs))
+        if controller:
+            parts.append("控制器是 " + controller)
+        return Check("usb_link", "USB 链路不是 3.0 直连", WARN,
+                     "输入延迟、震动变弱或断联可能来自这条链路，建议直插主板 USB 3.0 口；当前"
+                     + "，".join(parts), evidence=path)
+    return Check("usb_link", "USB 3.0 直连", OK, controller or path)
 
 
 def check_synapse(facts):
@@ -398,8 +421,8 @@ GRIP_CHECKS = {"synapse", "encoder", "settings", "game"}
 
 
 def build_report(facts):
-    checks = [check_integrity(facts), check_device(facts), check_bridge(facts), check_hidhide(facts),
-              check_usbip(facts), check_conflicts(facts)]
+    checks = [check_integrity(facts), check_device(facts), check_usb_link(facts), check_bridge(facts),
+              check_hidhide(facts), check_usbip(facts), check_conflicts(facts)]
     if facts.settings is not None and not getattr(facts.settings, "grip_enabled", True):
         # 用户主动关掉握把：雷云、编码器这些检查都没有意义，别再拿红字吓人。
         checks.append(Check("grips", "握把震动已关闭", SKIP,
@@ -482,7 +505,8 @@ def gather_facts(root=None, settings=None, mode=None, instance=None, bridge_runn
                  synapse_running=running, synapse_state=state, synapse_registration=registration,
                  encoder_path=encoder, encoder_sha=sha,
                  multiband=multi, conflicts=found_conflicts, stale=tuple(stale),
-                 audio_frames=audio_frames, audio_age=audio_age, environment_only=environment_only)
+                 audio_frames=audio_frames, audio_age=audio_age, environment_only=environment_only,
+                 usb_link=core.usb_link(instance))
 
 
 def diagnose(root=None, settings=None):

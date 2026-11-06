@@ -231,6 +231,85 @@ def xbox_restore_pending(instance):
     return bool(flags & 0x20) and class_guid.lower() == "{05f5cfe2-4733-4950-a6bb-07aad01a3a84}"
 
 
+def _device_name(instance):
+    """读设备的人类可读名：优先 PnP FriendlyName，退回注册表，最后用实例 ID。"""
+    import ctypes
+    import uuid
+    import winreg
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+    class PropertyKey(ctypes.Structure):
+        _fields_ = [("fmtid", GUID), ("pid", wintypes.DWORD)]
+
+    cfg = ctypes.WinDLL("cfgmgr32")
+    devinst = wintypes.DWORD()
+    if not cfg.CM_Locate_DevNodeW(ctypes.byref(devinst), instance, 0):
+        cfg.CM_Get_DevNode_PropertyW.argtypes = [
+            wintypes.DWORD, ctypes.POINTER(PropertyKey), ctypes.POINTER(wintypes.ULONG),
+            ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG), wintypes.ULONG]
+        key = PropertyKey(GUID.from_buffer_copy(
+            uuid.UUID("a45c254e-df1c-4efd-8020-67d146a850e0").bytes_le), 14)  # DEVPKEY_Device_FriendlyName
+        size = wintypes.ULONG(1024)
+        buffer = ctypes.create_unicode_buffer(512)
+        if not cfg.CM_Get_DevNode_PropertyW(devinst, ctypes.byref(key), ctypes.byref(wintypes.ULONG()),
+                                            buffer, ctypes.byref(size), 0) and buffer.value:
+            return buffer.value
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            "SYSTEM\\CurrentControlSet\\Enum\\" + instance) as key:
+            for value_name in ("FriendlyName", "DeviceDesc"):
+                try:
+                    value = winreg.QueryValueEx(key, value_name)[0]
+                except FileNotFoundError:
+                    continue
+                if value:
+                    return value.rsplit(";", 1)[-1]
+    except OSError:
+        pass
+    return instance
+
+
+def usb_link(instance):
+    """沿 PnP 父链读出控制器与中间 hub。
+
+    返回 {controller, root_hub, hubs, path}；读不到时返回 {}。父链里的 hub 会拖慢
+    输入轮询并挤占震动下行，USB 2.0 控制器更明显，所以自检要把它讲清楚。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    if not instance:
+        return {}
+    cfg = ctypes.WinDLL("cfgmgr32")
+    devinst = wintypes.DWORD()
+    if cfg.CM_Locate_DevNodeW(ctypes.byref(devinst), instance, 0):
+        return {}
+    chain = []
+    while len(chain) < 8:
+        parent = wintypes.DWORD()
+        if cfg.CM_Get_Parent(ctypes.byref(parent), devinst.value, 0):
+            break
+        buffer = ctypes.create_unicode_buffer(512)
+        if cfg.CM_Get_Device_IDW(parent, buffer, 512, 0):
+            break
+        parent_id = buffer.value
+        chain.append({"instance": parent_id, "name": _device_name(parent_id)})
+        if parent_id.upper().startswith(("PCI\\", "ACPI\\")):
+            break
+        devinst = parent
+    controller = chain[-1]["name"] if chain and chain[-1]["instance"].upper().startswith("PCI\\") else ""
+    root_hub = next((item["name"] for item in chain
+                     if item["instance"].upper().startswith("USB\\ROOT_HUB")), "")
+    hubs = tuple(item["name"] for item in chain
+                 if not item["instance"].upper().startswith(("USB\\ROOT_HUB", "PCI\\", "ACPI\\")))
+    return {"controller": controller, "root_hub": root_hub, "hubs": hubs,
+            "path": " → ".join([instance] + [item["instance"] for item in chain])}
+
+
 def find_controller():
     """返回 (实例 ID, 当前驱动服务)；没插时返回 (None, None)。可以放在界面定时器里轮询（Get-PnpDevice 每次要 1 秒以上）。"""
     import ctypes
